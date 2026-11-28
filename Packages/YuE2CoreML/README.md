@@ -13,7 +13,7 @@ python Scripts/export_assets.py /path/to/gguf /path/to/YuE2Assets
 
 The asset directory contains a versioned manifest, compiled graphs, tokenizer ranks, and a memory-mapped embedding table. Copy the entire directory as a unit. Expect approximately 6 GB for the default Mac bundle. Keep the assets outside SwiftPM source targets. Use `--platform iphoneos` or `--platform xros` with the matching SDK for another destination. The source package and model weights have separate distribution considerations. See the [YuE2 model card](https://huggingface.co/m-a-p/YuE2-3B) for model terms.
 
-The default bundle supports up to 264 prompt tokens and 5,200 music frames at 25 frames per second. Pass `--shared-weights` to share transformer weights among the prefill and decoder functions. Pass `--conditioning-batch 1` for a smaller decoder state on mobile. This variant drops the unconditional branch used for guidance, so it can produce a different take from the two-branch export. The prompt limit includes the style, formatting, and lyrics. The exporter supports larger prompt capacities and adjustable decoder and acoustic capacities. For a constrained-device bundle, export a single decoder ceiling and a matching acoustic ceiling. Smaller ceilings reduce the maximum attention working set.
+New exports default to 5,024 prompt tokens on macOS and 512 on iOS and visionOS, with up to 5,200 music frames at 25 frames per second. The prompt limit includes the sound description, formatting, and lyrics. Use `--prompt-capacity` to choose a budget from 32 to 5,024 tokens. Existing bundles retain their compiled capacity. Export and index a new bundle in a fresh directory when changing the capacity. Larger capacities increase the working set for prefill and Core ML acoustics even for short prompts. Pass `--shared-weights` to share transformer weights among the prefill and decoder functions. Pass `--conditioning-batch 1` for a smaller decoder state on mobile. This variant drops the unconditional branch used for guidance, which can produce a different take. On constrained devices, use a smaller prompt budget or smaller matching decoder and acoustic ceilings to reduce the attention working set.
 
 ## Use in an app
 
@@ -34,7 +34,7 @@ let result = try await renderer.render(request, to: destinationWAV)
 print(result.duration, result.naturalEnding)
 ```
 
-The output contains interleaved 48 kHz stereo PCM16. The renderer performs eight midpoint steps over the entire acoustic context and trims convolution halos from the waveform decoder tiles. The frame ceiling controls the maximum duration. Inspect `naturalEnding` to distinguish the model’s end token from reaching the ceiling. The progress callback can drive UI by forwarding its values to the main actor. Send one job at a time to a renderer and keep the asset directory available throughout each job. A cancelled or failed job preserves an existing destination file.
+The output contains interleaved 48 kHz stereo PCM16. The renderer defaults to eight midpoint steps over the entire acoustic context and trims convolution halos from the waveform decoder tiles. Set `SongRequest.synthesisSteps` to change the count. The frame ceiling controls the maximum duration. Inspect `naturalEnding` to distinguish the model’s end token from reaching the ceiling. The progress callback can drive UI by forwarding its values to the main actor. Send one job at a time to a renderer and keep the asset directory available throughout each job. A cancelled or failed job preserves an existing destination file.
 
 ### Faster isolated mode on macOS
 
@@ -64,6 +64,8 @@ The index describes the compiled bundle’s packed Q4 weights. Generate it from 
 
 On M3 Max, the standard Metal decoder schedules eight projection rows per threadgroup and unrolls its Q4 and attention loops. In a matched 3,200-token test, composition took 31.4 seconds with this tuning and 37.8 seconds with the original shader. Both runs produced the same tokens.
 
+On Mac and iOS, the standard single-song Q4 decoder fuses the gate and up projections when the GPU can load the fused pipeline. Set `VIBEPLAYER_METAL_GATE_UP=0` to compare against the separate projections.
+
 To add the optional paired layout, prepare the sidecar from that same indexed bundle:
 
 ```sh
@@ -72,7 +74,7 @@ python Scripts/prepare_paired.py /path/to/YuE2MetalAssets
 
 Select `.metalPaired` or `--metal-paired` to use it. The sidecar adds about 792 MiB and the renderer checks that it matches the weight and index files. The paired layout was fastest in the short-context iPhone test. Performance varies with song length, and the original Metal path remains the default Metal option.
 
-Pass `--fast-acoustic` when exporting to add `Acoustic3328.mlmodelc`, then set `SongRequest.acousticProfile` to `.fast` or pass `--fast-acoustic` to the CLI. The smaller graph is used when it covers the whole song and the reference bucket is larger. It still performs eight full-context synthesis steps. Its PCM output can differ from the reference graph.
+Pass `--fast-acoustic` when exporting to add `Acoustic3328.mlmodelc`, then set `SongRequest.acousticProfile` to `.fast` or pass `--fast-acoustic` to the CLI. The smaller graph is used when it covers the whole song and the reference bucket is larger. It uses the requested step count and full song context. Its PCM output can differ from the reference graph.
 
 To extend an existing indexed bundle to 4 minutes 16 seconds, add an acoustic graph for the longer Metal context:
 

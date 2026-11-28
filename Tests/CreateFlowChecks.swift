@@ -4,6 +4,7 @@ import AVFoundation
 @MainActor
 private final class TestWriter: LyricsWriter {
     var failRewrite = false
+    var failLyrics = false
     var lyricsRequest: MusicGenerationRequest?
     var revisedField: MusicPromptField?
 
@@ -14,6 +15,7 @@ private final class TestWriter: LyricsWriter {
 
     func writeLyrics(for request: MusicGenerationRequest) async throws -> String {
         lyricsRequest = request
+        if failLyrics { throw GeminiLyricsError.rejected(403) }
         return "Original lyrics"
     }
 
@@ -32,6 +34,7 @@ private enum TestError: LocalizedError {
 @MainActor
 private final class TestRenderer: MusicGenerationBackend {
     var isAvailable = true
+    var canPlanScore = true
     var request: MusicGenerationRequest?
     var receivedPreview = false
     var needsRevision = false
@@ -108,16 +111,19 @@ struct CreateFlowChecks {
         precondition(renderer.request?.guidanceScale == 1.2)
         precondition(renderer.request?.lyrics == "Original lyrics")
         precondition(renderer.request?.createRenderer == .metal)
+        precondition(renderer.request?.synthesisSteps == 32 && renderer.request?.planScore == true)
         precondition(renderer.receivedPreview && renderer.request?.createAcoustics == .reference)
         try await Task.sleep(nanoseconds: 250_000_000)
         precondition(!player.isCreating && player.errorMessage == "Test renderer failed")
 
         writer.failRewrite = true
         player.generateSong(idea: "original idea", instrumental: true, createStyles: "ambient", acoustics: .streaming,
+                            renderingSteps: .sixteen,
                             followStyleClosely: false, clearLeadVocals: true)
         try await Task.sleep(nanoseconds: 60_000_000)
         precondition(renderer.request?.style.contains("original idea") == true)
         precondition(renderer.request?.style.contains("clear diction") == false && renderer.request?.guidanceScale == nil)
+        precondition(renderer.request?.synthesisSteps == 16 && renderer.request?.planScore == false)
         precondition(renderer.receivedPreview)
         precondition(player.creationNotice?.contains("original") == true)
         player.cancelGeneration()
@@ -152,11 +158,28 @@ struct CreateFlowChecks {
         #if os(macOS)
         try await checkRadioKeepsPlayingAfterLateEdit()
         try await checkRadioFillsQueueAndUsesPreparedSuccessor()
+        try await checkRadioSurfacesLyricsFailure()
         #endif
         print("Create flow checks passed")
     }
 
     #if os(macOS)
+    @MainActor private static func checkRadioSurfacesLyricsFailure() async throws {
+        let writer = TestWriter()
+        writer.failLyrics = true
+        let renderer = TestRenderer()
+        let player = PlayerStore(generationBackend: renderer, lyricsWriter: writer)
+        player.select(player.vibes.first { $0.catalogID == "christmas-morning" }!)
+        player.prepareRadio()
+        defer { player.cancelRadioPreparation() }
+
+        let deadline = ContinuousClock.now + .seconds(5)
+        while player.errorMessage == nil, .now < deadline { try await Task.sleep(for: .milliseconds(20)) }
+        precondition(writer.lyricsRequest?.voice == .vocals)
+        precondition(player.errorMessage == GeminiLyricsError.rejected(403).errorDescription)
+        precondition(renderer.request == nil && player.radioReadyCount == 0)
+    }
+
     @MainActor private static func checkRadioKeepsPlayingAfterLateEdit() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)

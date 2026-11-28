@@ -78,7 +78,7 @@ struct PlayerView: View {
             case .failure: player.errorMessage = "Couldn't import this audio file. Please try again."
             }
         }
-        .alert("infetit radio", isPresented: Binding(get: { player.errorMessage != nil }, set: { if !$0 { player.errorMessage = nil } })) { Button("OK", role: .cancel) { player.errorMessage = nil } } message: { Text(player.errorMessage ?? "") }
+        .alert("infetit radio", isPresented: Binding(get: { player.errorMessage != nil && soundEditor == nil && !showImporter }, set: { if !$0 { player.errorMessage = nil } })) { Button("OK", role: .cancel) { player.errorMessage = nil } } message: { Text(player.errorMessage ?? "") }
     }
     private var scrollMarker: some View {
         GeometryReader { proxy in
@@ -115,8 +115,19 @@ struct PlayerView: View {
             }
     }
     private func singleTrackPlayer(geometry: GeometryProxy) -> some View {
-        ScrollView {
-            VStack(spacing: 22) {
+        #if os(macOS)
+        let artworkSize = max(100, min(220, geometry.size.height * 0.25, geometry.size.width - 64))
+        let contentSpacing: CGFloat = 8
+        let artworkTopPadding: CGFloat = 4
+        let bottomPadding: CGFloat = 8
+        #else
+        let artworkSize = min(geometry.size.width - 64, 390)
+        let contentSpacing: CGFloat = 22
+        let artworkTopPadding: CGFloat = 12
+        let bottomPadding: CGFloat = 35
+        #endif
+        return ScrollView {
+            VStack(spacing: contentSpacing) {
                 scrollMarker
                 dismissHandle
                 HStack {
@@ -129,9 +140,9 @@ struct PlayerView: View {
                     }.accessibilityLabel("More options")
                 }
                 TrackArtwork(image: player.trackArtwork, palette: player.selected.palette)
-                    .aspectRatio(1, contentMode: .fit).frame(maxWidth: min(geometry.size.width - 64, 390))
+                    .aspectRatio(1, contentMode: .fit).frame(maxWidth: artworkSize)
                     .shadow(color: .black.opacity(0.25), radius: 28, y: 18)
-                    .padding(.top, 12).accessibilityIdentifier("track-artwork")
+                    .padding(.top, artworkTopPadding).accessibilityIdentifier("track-artwork")
                 VStack(alignment: .leading, spacing: 5) {
                     Text(player.trackName).font(.title2.bold()).lineLimit(2).accessibilityIdentifier("track-title")
                     Text(player.trackArtist ?? (player.isGenerated ? "Your song" : "Audio from your device"))
@@ -158,7 +169,7 @@ struct PlayerView: View {
                     if player.sleepMinutes != nil { Button("Turn off timer") { player.setSleepTimer(nil) } }
                 } label: { Label("Sleep timer", systemImage: player.sleepMinutes == nil ? "moon.fill" : "moon.zzz.fill").font(.subheadline).padding(.horizontal, 16).frame(height: 44).vibeGlass() }
                     .accessibilityLabel("Sleep timer")
-            }.padding(.horizontal, 28).padding(.bottom, 35).frame(maxWidth: 500).frame(maxWidth: .infinity)
+            }.padding(.horizontal, 28).padding(.bottom, bottomPadding).frame(maxWidth: 500).frame(maxWidth: .infinity)
         }.coordinateSpace(name: "player-scroll")
             .onPreferenceChange(PlayerScrollOffsetKey.self) { scrollAtTop = $0 >= -2 }
             .simultaneousGesture(dismissGesture)
@@ -212,7 +223,8 @@ struct PlayerView: View {
             } else {
                 Text(MusicGenerationError.metalUnavailable.localizedDescription).font(.footnote).foregroundStyle(.white.opacity(0.6))
             }
-        }.frame(maxWidth: .infinity, alignment: .leading).padding(20).background(.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 22)).overlay(RoundedRectangle(cornerRadius: 22).stroke(.white.opacity(0.1)))
+        }.frame(maxWidth: .infinity, alignment: .leading).padding(20).playerContentSurface()
+
     }
     private var header: some View {
         HStack(alignment: .center) {
@@ -243,14 +255,7 @@ struct PlayerView: View {
             }
         }
         .padding(16)
-        .background {
-            RoundedRectangle(cornerRadius: 26)
-                .fill(.linearGradient(
-                    colors: [Color(red: 0.105, green: 0.10, blue: 0.16), Color(red: 0.045, green: 0.054, blue: 0.085)],
-                    startPoint: .topLeading, endPoint: .bottomTrailing
-                ))
-        }
-        .overlay { RoundedRectangle(cornerRadius: 26).strokeBorder(.white.opacity(0.14)) }
+        .playerConsoleSurface()
         .foregroundStyle(.white)
     }
 
@@ -612,12 +617,12 @@ struct PlayerBackground: View {
     var body: some View {
         GeometryReader { geo in
             ZStack {
-                Color(red: 0.035, green: 0.035, blue: 0.05)
-                Circle().fill(Color.blue.opacity(0.48)).frame(width: geo.size.width * 1.25).blur(radius: 80).offset(x: -geo.size.width * (drifting ? 0.22 : 0.45), y: -geo.size.height * (drifting ? 0.06 : 0.17))
-                Circle().fill((palette == 2 ? Color.teal : Color.yellow).opacity(0.34)).frame(width: geo.size.width).blur(radius: 85).offset(x: geo.size.width * (drifting ? 0.30 : 0.55), y: -geo.size.height * (drifting ? 0.24 : 0.35))
-                Circle().fill((palette == 2 ? Color.blue : Color.purple).opacity(0.48)).frame(width: geo.size.width * 1.2).blur(radius: 90).offset(x: drifting ? geo.size.width * 0.18 : -20, y: geo.size.height * (drifting ? 0.06 : 0.16))
-                Circle().fill(Color.pink.opacity(0.25)).frame(width: geo.size.width).blur(radius: 90).offset(x: geo.size.width * (drifting ? 0.16 : 0.4), y: geo.size.height * (drifting ? 0.31 : 0.45))
-                LinearGradient(colors: [.black.opacity(0.18), .clear, .black.opacity(0.55)], startPoint: .top, endPoint: .bottom)
+                Color(red: 0.16, green: 0.09, blue: 0.26)
+                Circle().fill(Color.blue.opacity(0.65)).frame(width: geo.size.width * 1.25).blur(radius: 80).offset(x: -geo.size.width * (drifting ? 0.22 : 0.45), y: -geo.size.height * (drifting ? 0.06 : 0.17))
+                Circle().fill((palette == 2 ? Color.teal : Color.pink).opacity(0.45)).frame(width: geo.size.width).blur(radius: 85).offset(x: geo.size.width * (drifting ? 0.30 : 0.55), y: -geo.size.height * (drifting ? 0.24 : 0.35))
+                Circle().fill((palette == 2 ? Color.blue : Color.purple).opacity(0.68)).frame(width: geo.size.width * 1.2).blur(radius: 90).offset(x: drifting ? geo.size.width * 0.18 : -20, y: geo.size.height * (drifting ? 0.06 : 0.16))
+                Circle().fill(Color.pink.opacity(0.46)).frame(width: geo.size.width).blur(radius: 90).offset(x: geo.size.width * (drifting ? 0.16 : 0.4), y: geo.size.height * (drifting ? 0.31 : 0.45))
+                LinearGradient(colors: [.black.opacity(0.10), .clear, .black.opacity(0.24)], startPoint: .top, endPoint: .bottom)
                 Circle().fill(Color.white.opacity(reduceMotion ? 0 : audioLevel * 0.055)).frame(width: geo.size.width * 0.75).blur(radius: 90)
                     .scaleEffect(beatPulse ? 1.1 : 0.9)
                     .animation(.easeOut(duration: 0.3), value: beatPulse)
@@ -674,6 +679,25 @@ struct FlowLayout: Layout {
 }
 
 extension View {
+    @ViewBuilder func playerContentSurface() -> some View {
+        #if os(macOS)
+        self
+        #else
+        self.background(.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 22))
+            .overlay(RoundedRectangle(cornerRadius: 22).stroke(.white.opacity(0.1)))
+        #endif
+    }
+    @ViewBuilder func playerConsoleSurface() -> some View {
+        #if os(macOS)
+        self
+        #else
+        self.background {
+            RoundedRectangle(cornerRadius: 26).fill(.linearGradient(
+                colors: [Color(red: 0.105, green: 0.10, blue: 0.16), Color(red: 0.045, green: 0.054, blue: 0.085)],
+                startPoint: .topLeading, endPoint: .bottomTrailing))
+        }.overlay { RoundedRectangle(cornerRadius: 26).strokeBorder(.white.opacity(0.14)) }
+        #endif
+    }
     @ViewBuilder func vibePlayerControls() -> some View {
         #if os(macOS)
         self.buttonStyle(.plain).menuStyle(.borderlessButton)
@@ -682,11 +706,11 @@ extension View {
         #endif
     }
     @ViewBuilder func vibeGlass() -> some View {
-        if #available(iOS 26, macOS 26, *) { self.foregroundStyle(.white).glassEffect(.regular.tint(.black.opacity(0.28)).interactive(), in: Capsule()) }
+        if #available(iOS 26, macOS 26, *) { self.foregroundStyle(.white).glassEffect(.clear.interactive(), in: Capsule()) }
         else { self.foregroundStyle(.white).background(.ultraThinMaterial, in: Capsule()).overlay(Capsule().stroke(.white.opacity(0.2))) }
     }
     @ViewBuilder func vibeGlassCircle() -> some View {
-        if #available(iOS 26, macOS 26, *) { self.foregroundStyle(.white).glassEffect(.regular.tint(.black.opacity(0.28)).interactive(), in: Circle()) }
+        if #available(iOS 26, macOS 26, *) { self.foregroundStyle(.white).glassEffect(.clear.interactive(), in: Circle()) }
         else { self.foregroundStyle(.white).background(.ultraThinMaterial, in: Circle()).overlay(Circle().stroke(.white.opacity(0.15))) }
     }
 }

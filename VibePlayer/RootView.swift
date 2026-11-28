@@ -4,7 +4,9 @@ import AVKit
 
 struct RootView: View {
     @Environment(PlayerStore.self) private var player
+    @Environment(MusicModelDownload.self) private var modelDownload
     @State private var tab = 0
+    @State private var createPrompt = ""
     @State private var showPlayer = ProcessInfo.processInfo.arguments.contains("--preview-player")
     @State private var showImporter = false
     @State private var stationCategory: StationCategory?
@@ -12,6 +14,7 @@ struct RootView: View {
     @State private var stationSource: Vibe?
     @State private var openCreatedStation = false
     @State private var preparingRemix = false
+    @State private var showModelSetup = false
 
     var body: some View {
         platformNavigation
@@ -22,6 +25,7 @@ struct RootView: View {
             case .failure: player.errorMessage = "Couldn't import this audio file. Please try again."
             }
         }
+        .sheet(isPresented: $showModelSetup) { MusicModelSetupView(download: modelDownload) }
         .sheet(item: $stationSource, onDismiss: {
             if openCreatedStation {
                 openCreatedStation = false
@@ -35,56 +39,34 @@ struct RootView: View {
                 }
             }
         }
-        .onAppear { if ProcessInfo.processInfo.arguments.contains("--preview-playing") { player.play() } }
-        .alert("infetit radio", isPresented: Binding(get: { player.errorMessage != nil }, set: { if !$0 { player.errorMessage = nil } })) {
+        .onAppear {
+            if ProcessInfo.processInfo.arguments.contains("--preview-playing") { player.play() }
+            #if DEBUG
+            let arguments = ProcessInfo.processInfo.arguments
+            if !player.canGenerate && (!arguments.contains("--ui-testing") || arguments.contains("--show-model-setup")) {
+                showModelSetup = true
+            }
+            #else
+            if !player.canGenerate { showModelSetup = true }
+            #endif
+        }
+        .alert("infetit radio", isPresented: Binding(get: { player.errorMessage != nil && !showPlayer && !showModelSetup && stationSource == nil && !showImporter }, set: { if !$0 { player.errorMessage = nil } })) {
             Button("OK", role: .cancel) { player.errorMessage = nil }
         } message: { Text(player.errorMessage ?? "") }
     }
     @ViewBuilder private var platformNavigation: some View {
         #if os(macOS)
-        adaptiveNavigation
+        DesktopWorkspace(showPlayer: $showPlayer, prompt: $createPrompt,
+                         newStation: { stationSource = player.selected },
+                         importAudio: { showImporter = true })
         #else
         TabView(selection: $tab) {
             NavigationStack { discover.safeAreaInset(edge: .bottom, spacing: 0) { miniPlayer } }.tabItem { Label("Radio", systemImage: "dot.radiowaves.left.and.right") }.tag(0)
-            NavigationStack { CreateSongView { showPlayer = true } }.tabItem { Label("Create", systemImage: "square.and.pencil") }.tag(2)
+            NavigationStack { CreateSongView(prompt: $createPrompt) { showPlayer = true } }.tabItem { Label("Create", systemImage: "square.and.pencil") }.tag(2)
             NavigationStack { library.safeAreaInset(edge: .bottom, spacing: 0) { miniPlayer } }.tabItem { Label("Library", systemImage: "square.stack.3d.up") }.tag(1)
         }.fullScreenCover(isPresented: $showPlayer) { PlayerView() }
         #endif
     }
-    #if os(macOS)
-    private var adaptiveNavigation: some View {
-        NavigationSplitView {
-            List(selection: Binding<Int?>(
-                get: { tab },
-                set: { selection in
-                    guard let selection else { return }
-                    tab = selection
-                    showPlayer = false
-                }
-            )) {
-                Label("Radio", systemImage: "dot.radiowaves.left.and.right").tag(0)
-                Label("Create", systemImage: "square.and.pencil").tag(2)
-                Label("Library", systemImage: "square.stack.3d.up").tag(1)
-            }
-            .listStyle(.sidebar)
-            .navigationTitle("infetit radio")
-            .navigationSplitViewColumnWidth(min: 180, ideal: 220, max: 280)
-        } detail: {
-            if showPlayer {
-                PlayerView(close: { showPlayer = false })
-            } else {
-                NavigationStack {
-                    switch tab {
-                    case 2: CreateSongView { showPlayer = true }
-                    case 1: library.safeAreaInset(edge: .bottom, spacing: 0) { miniPlayer }
-                    default: discover.safeAreaInset(edge: .bottom, spacing: 0) { miniPlayer }
-                    }
-                }
-            }
-        }
-    }
-    #endif
-
     private var miniPlayer: some View {
         MiniPlayer { showPlayer = true }.padding(.horizontal, 12).padding(.bottom, 6)
     }
@@ -216,6 +198,19 @@ struct MiniPlayer: View {
             .buttonStyle(.plain)
             .background {
                 let shape = RoundedRectangle(cornerRadius: 18)
+                #if os(macOS)
+                shape.fill(Color.indigo.opacity(0.22))
+                    .overlay {
+                        GeometryReader { geometry in
+                            Rectangle()
+                                .fill(.linearGradient(colors: [.pink.opacity(0.52), .purple.opacity(0.42)], startPoint: .leading, endPoint: .trailing))
+                                .frame(width: geometry.size.width * fill)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }.clipShape(shape)
+                    }
+                    .animation(reduceMotion ? nil : .linear(duration: 0.18), value: fill)
+                    .accessibilityHidden(true)
+                #else
                 shape.fill(.ultraThinMaterial)
                     .overlay {
                         GeometryReader { geometry in
@@ -232,6 +227,7 @@ struct MiniPlayer: View {
                     }
                     .animation(reduceMotion ? nil : .linear(duration: 0.18), value: fill)
                     .accessibilityHidden(true)
+                #endif
             }
             .overlay(RoundedRectangle(cornerRadius: 18).stroke(.white.opacity(0.1)))
     }

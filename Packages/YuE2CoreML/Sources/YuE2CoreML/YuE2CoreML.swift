@@ -21,10 +21,15 @@ public struct SongRequest: Codable, Equatable, Sendable {
     public var semanticPrefix: [Int]?
     /// Semantic classifier-free guidance for the style and lyrics. Omit to use the direct-mode default.
     public var guidanceScale: Float?
+    /// Midpoint steps per acoustic pass. Omit to use eight steps.
+    public var synthesisSteps: Int?
+    /// ABC melody score to realize before the semantic music tokens.
+    public var scoreABC: String?
+    var acousticSteps: Int { synthesisSteps ?? 8 }
 
     public init(lyrics: String, style: String, seed: UInt64, maximumFrames: Int? = nil,
                 minimumFrames: Int = 200, acousticProfile: AcousticProfile? = nil, semanticPrefix: [Int]? = nil,
-                guidanceScale: Float? = nil) {
+                guidanceScale: Float? = nil, synthesisSteps: Int? = nil, scoreABC: String? = nil) {
         self.acousticProfile = acousticProfile
         self.lyrics = lyrics
         self.style = style
@@ -33,6 +38,8 @@ public struct SongRequest: Codable, Equatable, Sendable {
         self.minimumFrames = minimumFrames
         self.semanticPrefix = semanticPrefix
         self.guidanceScale = guidanceScale
+        self.synthesisSteps = synthesisSteps
+        self.scoreABC = scoreABC
     }
 }
 
@@ -126,10 +133,10 @@ public final class YuE2Renderer: Sendable {
     public var supportsStreamingAcoustics: Bool { usesMetal && assets.manifest.acousticFrames.contains(AcousticWindow.capacity) }
 
     @concurrent
-    public func promptUsage(style: String, lyrics: String) async throws -> SongPromptUsage {
+    public func promptUsage(style: String, lyrics: String, scoreABC: String? = nil) async throws -> SongPromptUsage {
         try Task.checkCancellation()
         let tokenizer = try Tokenizer(url: assets.url("tokenizer.tiktoken"))
-        let request = SongRequest(lyrics: lyrics, style: style, seed: 0)
+        let request = SongRequest(lyrics: lyrics, style: style, seed: 0, scoreABC: scoreABC)
         let prompt = try tokenizer.prompt(request)
         return try SongPromptUsage(count: prompt.map(\.count).max() ?? 0, limit: assets.manifest.promptCapacity,
                                    styleTokens: tokenizer.encode(style).count, lyricTokens: tokenizer.encode(lyrics).count)
@@ -264,7 +271,7 @@ public final class YuE2Renderer: Sendable {
         let fullSongContext = !windowed || workerResult.tokens.count < AcousticWindow.advance + AcousticWindow.context
         return SongResult(audioURL: output, codecTokens: workerResult.tokens,
                           naturalEnding: workerResult.naturalEnding, sampleRate: 48_000, channels: 2,
-                          sampleFrames: workerResult.sampleFrames, synthesisSteps: 8, fullSongContext: fullSongContext,
+                          sampleFrames: workerResult.sampleFrames, synthesisSteps: request.acousticSteps, fullSongContext: fullSongContext,
                           tokenSeconds: tokenSeconds, acousticSeconds: workerResult.acousticSeconds,
                           waveformSeconds: workerResult.waveformSeconds)
     }
@@ -387,7 +394,7 @@ struct ModelAssets: Sendable {
         manifest = try readRecord(Manifest.self, at: directory.appendingPathComponent("manifest.json"))
         let m = manifest
         guard (1...3).contains(m.version), (1...2).contains(m.batch),
-              m.version != 3 || m.batch == 2, (32...1024).contains(m.promptCapacity),
+              m.version != 3 || m.batch == 2, (32...5_024).contains(m.promptCapacity),
               Self.valid(m.decoderFrames, maximum: 5200), Self.valid(m.acousticFrames, maximum: 6400),
               let acoustic = m.acousticFrames.last, let decoder = m.decoderFrames.last,
               acoustic >= decoder else { throw YuE2Failure.assets("Invalid version or graph capacities.") }
@@ -421,6 +428,9 @@ struct ModelAssets: Sendable {
     }
 
     func limits(for request: SongRequest, useMetal: Bool = false) throws -> Int {
+        guard (1...64).contains(request.acousticSteps) else {
+            throw YuE2Failure.request("Use between 1 and 64 synthesis steps.")
+        }
         guard let ceiling = decoderCapacities(useMetal: useMetal).last else {
             throw YuE2Failure.assets("There are no decoder capacities.")
         }
@@ -433,13 +443,15 @@ struct ModelAssets: Sendable {
                 throw YuE2Failure.request("Adjustable text guidance requires a two-branch model bundle.")
             }
         }
+        // The YuE2 tokenizer has tokens up to 128 UTF-8 bytes long.
+        let maximumInputBytes = max(32_768, manifest.promptCapacity * 128)
         guard (128...ceiling).contains(limit), (128...limit).contains(request.minimumFrames),
               !request.style.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-              request.lyrics.utf8.count + request.style.utf8.count <= 32768 else {
+              request.lyrics.utf8.count + request.style.utf8.count + (request.scoreABC?.utf8.count ?? 0) <= maximumInputBytes else {
             throw YuE2Failure.request("Check the style, input length, and frame limits for this asset bundle.")
         }
         if let prefix = request.semanticPrefix, !prefix.isEmpty {
-            guard prefix.count < limit, prefix.allSatisfy({ (0..<32768).contains($0) }) else {
+            guard request.scoreABC == nil, prefix.count < limit, prefix.allSatisfy({ (0..<32768).contains($0) }) else {
                 throw YuE2Failure.request("The reference needs valid semantic codes and room for new music.")
             }
         }

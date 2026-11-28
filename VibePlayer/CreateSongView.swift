@@ -5,24 +5,34 @@ import AppKit
 import UIKit
 #endif
 import AVFoundation
+import LiquidSongwriting
 import UniformTypeIdentifiers
+import YuE2Kit
 
 struct CreateSongView: View {
     @Environment(PlayerStore.self) private var player
+    @Environment(MusicModelDownload.self) private var modelDownload
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Binding var prompt: String
     let openPlayer: () -> Void
+    #if os(macOS)
+    var desktopHistory: DesktopSongHistory? = nil
+    #endif
     @ScaledMetric(relativeTo: .body) private var minimumEditorHeight: CGFloat = 112
-    @State private var prompt = ""
     @State private var styles = ""
     @State private var lyrics = ""
     @State private var instrumental = false
     @AppStorage("vibe-create-acoustics") private var preferredInstrumentalAcoustics = ""
     @AppStorage("vibe-create-vocal-acoustics") private var preferredVocalAcoustics = ""
     @AppStorage("vibe-create-length") private var preferredLength = ""
+    @AppStorage(RenderingSteps.createPreferenceKey) private var renderingSteps = RenderingSteps.createDefault
+    @AppStorage("vibe-create-plan-score") private var planScore = true
+    @AppStorage("vibe-create-compact-attention-cache") private var compactAttentionCache = false
     @AppStorage("vibe-create-follow-style-closely") private var followStyleClosely = true
     @AppStorage("vibe-create-clear-lead-vocals") private var clearLeadVocals = false
     @State private var saved = false
     @State private var showSongwritingSettings = false
+    @State private var showModelSetup = false
     @State private var showStyles = false
     @State private var showLyrics = false
     @State private var showSamplePicker = false
@@ -31,28 +41,54 @@ struct CreateSongView: View {
     @State private var samplePlayer: AVAudioPlayer?
     @State private var sampleName: String?
     @State private var referenceTask: Task<Void, Never>?
+    @State private var melody: MelodyReference?
+    #if os(macOS)
+    @State private var showMelody = false
+    #endif
     @State private var catalog: AppleMusicQuery?
     @State private var polishingPrompt = false
     @State private var promptPolishTask: Task<Void, Never>?
     @State private var promptError: String?
     @FocusState private var promptFocused: Bool
 
-    private let accent = Color(red: 0.85, green: 0.79, blue: 1)
+    private var accent: Color {
+        #if os(macOS)
+        if desktopHistory != nil { return DesktopColors.accent }
+        #endif
+        return Color(red: 0.85, green: 0.79, blue: 1)
+    }
+    private var backgroundColor: Color {
+        #if os(macOS)
+        if desktopHistory != nil { return .clear }
+        #endif
+        return Color(red: 0.045, green: 0.045, blue: 0.055)
+    }
     private var hasPrompt: Bool { !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
     private var catalogQuery: AppleMusicQuery? {
-        guard player.remixSource == nil, sampleName == nil, styles.isEmpty, lyrics.isEmpty, !instrumental else { return nil }
+        guard melody == nil, player.remixSource == nil, sampleName == nil, styles.isEmpty, lyrics.isEmpty, !instrumental else { return nil }
         return AppleMusicQuery.parse(prompt)
     }
-    private var canCreate: Bool { hasPrompt || player.remixSource != nil }
+    private var canCreate: Bool { hasPrompt || player.remixSource != nil || melody != nil }
     private var canSubmit: Bool {
         catalogQuery != nil || (player.canGenerate && canCreate && !polishingPrompt && referenceTask == nil &&
                                (sampleName == nil || player.remixSource != nil))
     }
     private var showsPlayback: Bool { player.isPlaying || player.isGenerated || !player.isSample || player.isWaitingForRadio }
     private var acoustics: CreateAcoustics {
-        if player.remixSource != nil { return .reference }
+        if player.remixSource != nil || melody != nil { return .reference }
         let preference = instrumental ? preferredInstrumentalAcoustics : preferredVocalAcoustics
         return CreateAcoustics.resolve(preference: preference, supportsEarlyPlayback: player.canStreamAcoustics)
+    }
+    private var canPlanVocalScore: Bool {
+        player.canPlanScore && player.remixSource == nil && melody == nil
+            && CreateAcoustics.resolve(preference: preferredVocalAcoustics, supportsEarlyPlayback: player.canStreamAcoustics) == .reference
+    }
+    private var usesCompactAttentionCache: Bool {
+        #if os(macOS)
+        compactAttentionCache && planScore && canPlanVocalScore && !instrumental
+        #else
+        false
+        #endif
     }
     private var length: CreateLength {
         if let preferred = CreateLength(rawValue: preferredLength), preferred != .extended || player.canCreateExtended {
@@ -74,41 +110,32 @@ struct CreateSongView: View {
     }
 
     var body: some View {
-        GeometryReader { geometry in
-            ScrollView {
-                VStack(alignment: .leading, spacing: geometry.size.height < 450 ? 12 : 18) {
-                    header
-                    composer(editorHeight: max(minimumEditorHeight, min(208, geometry.size.height * 0.30)))
-                    if prompt.isEmpty { suggestions }
-                    if saved {
-                        Label("Saved to your library", systemImage: "checkmark.circle.fill")
-                            .font(.subheadline).foregroundStyle(accent).accessibilityIdentifier("idea-saved")
-                    }
-                    if !player.canGenerate {
-                        Text(MusicGenerationError.metalUnavailable.localizedDescription)
-                            .font(.footnote).foregroundStyle(.white.opacity(0.72))
-                    }
-                }
-                .frame(maxWidth: 600, alignment: .leading)
-                .padding(.horizontal, 16).padding(.top, 8).padding(.bottom, 16)
-                .frame(maxWidth: .infinity)
-            }
-            .safeAreaInset(edge: .bottom, spacing: 0) {
-                dock.frame(maxWidth: 600).padding(.horizontal, 16).padding(.vertical, 6)
-                    .frame(maxWidth: .infinity)
-                    .background(alignment: .bottom) {
-                        LinearGradient(colors: [.clear, Color(red: 0.045, green: 0.045, blue: 0.055)],
-                                       startPoint: .top, endPoint: .bottom)
-                            .allowsHitTesting(false)
-                    }
-            }
-        }
+        workspace
         .vibeKeyboardDismissal()
-        .background(Color(red: 0.045, green: 0.045, blue: 0.055))
+        .background(backgroundColor)
         .vibeHideNavigationBar()
         .vibeEditorPresentation(isPresented: $showStyles) { SongTextEditor(kind: .styles, value: $styles, instrumental: $instrumental, idea: prompt, styles: styles) }
-        .vibeEditorPresentation(isPresented: $showLyrics) { SongTextEditor(kind: .lyrics, value: $lyrics, instrumental: $instrumental, idea: prompt, styles: styles) }
-        .sheet(isPresented: $showSongwritingSettings) { SongwritingSettings() }
+        .vibeEditorPresentation(isPresented: $showLyrics) {
+            SongTextEditor(kind: .lyrics, value: $lyrics, instrumental: $instrumental, idea: prompt, styles: styles,
+                           length: length, clearLeadVocals: clearLeadVocals,
+                           showsPromptUsage: !(canPlanVocalScore && planScore))
+        }
+        .sheet(isPresented: $showModelSetup) { MusicModelSetupView(download: modelDownload) }
+        #if os(macOS)
+        .sheet(isPresented: $showMelody) {
+            MelodyReferenceSheet(reference: melody, canRender: player.canRenderMelody) { reference in
+                clearSample()
+                melody = reference
+            }
+        }
+        #endif
+        .sheet(isPresented: $showSongwritingSettings) {
+            #if os(macOS)
+            SongwritingSettings().frame(minWidth: 540, minHeight: 480)
+            #else
+            SongwritingSettings()
+            #endif
+        }
         #if os(macOS)
         .sheet(isPresented: $showGeneration) { generationDetail.frame(minWidth: 520, minHeight: 580) }
         #else
@@ -129,22 +156,150 @@ struct CreateSongView: View {
         }
         .onChange(of: prompt) { if !prompt.isEmpty { saved = false } }
         .onChange(of: player.remixSource?.originalAudio, initial: true) {
+            if player.remixSource?.originalAudio != nil { melody = nil }
             if let originalLyrics = player.remixSource?.sourceLyrics, !hasPrompt, lyrics.isEmpty {
                 lyrics = originalLyrics
                 instrumental = originalLyrics.isEmpty
             }
         }
         .alert("Polish prompt", isPresented: Binding(get: { promptError != nil }, set: { if !$0 { promptError = nil } })) { Button("OK", role: .cancel) { promptError = nil } } message: { Text(promptError ?? "") }
-        .onChange(of: acoustics, initial: true) { if acoustics == .streaming { player.prepareEarlyPlayback() } }
+        .onChange(of: acoustics, initial: true) {
+            if acoustics == .streaming || hasPrompt { prepareRendering() }
+        }
+        .onChange(of: hasPrompt) {
+            if hasPrompt && acoustics == .reference { prepareRendering() }
+        }
+        .onChange(of: usesCompactAttentionCache) {
+            if hasPrompt && acoustics == .reference { prepareRendering() }
+        }
+        .onChange(of: renderingSteps) {
+            if hasPrompt && acoustics == .reference { prepareRendering() }
+        }
         .onDisappear { samplePlayer?.stop(); promptPolishTask?.cancel(); polishingPrompt = false }
     }
 
+    @ViewBuilder private var workspace: some View {
+        #if os(macOS)
+        if let desktopHistory {
+            desktopWorkspace(history: desktopHistory)
+        } else {
+            mobileWorkspace
+        }
+        #else
+        mobileWorkspace
+        #endif
+    }
+
+    private var mobileWorkspace: some View {
+        GeometryReader { geometry in
+            ScrollView {
+                VStack(alignment: .leading, spacing: geometry.size.height < 450 ? 12 : 18) {
+                    header
+                    composer(editorHeight: max(minimumEditorHeight, min(208, geometry.size.height * 0.30)))
+                    if prompt.isEmpty { suggestions }
+                    if saved {
+                        Label("Saved to your library", systemImage: "checkmark.circle.fill")
+                            .font(.subheadline).foregroundStyle(accent).accessibilityIdentifier("idea-saved")
+                    }
+                    if !player.canGenerate {
+                        Button("Download the music model") { showModelSetup = true }
+                            .font(.footnote.weight(.semibold))
+                    }
+                }
+                .frame(maxWidth: 600, alignment: .leading)
+                .padding(.horizontal, 16).padding(.top, 8).padding(.bottom, 16)
+                .frame(maxWidth: .infinity)
+            }
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                dock.frame(maxWidth: 600).padding(.horizontal, 16).padding(.vertical, 6)
+                    .frame(maxWidth: .infinity)
+                    .background(alignment: .bottom) {
+                        LinearGradient(colors: [.clear, Color(red: 0.045, green: 0.045, blue: 0.055)],
+                                       startPoint: .top, endPoint: .bottom)
+                            .allowsHitTesting(false)
+                    }
+            }
+        }
+    }
+
+    #if os(macOS)
+    private func desktopWorkspace(history: DesktopSongHistory) -> some View {
+        GeometryReader { geometry in
+            let availableWidth = min(geometry.size.width, 1220)
+            if availableWidth >= 900 {
+                HStack(alignment: .top, spacing: 28) {
+                    ScrollView { desktopComposer }
+                        .frame(width: min(600, availableWidth * 0.54))
+                    ScrollView { history }
+                        .frame(maxWidth: .infinity)
+                }
+                .frame(maxWidth: 1220)
+                .frame(maxWidth: .infinity, alignment: .center)
+            } else {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 28) {
+                        desktopComposer
+                        history
+                    }
+                    .frame(maxWidth: 700)
+                    .frame(maxWidth: .infinity)
+                }
+            }
+        }
+        .padding(.horizontal, 12)
+    }
+
+    private var desktopComposer: some View {
+        VStack(alignment: .leading, spacing: 15) {
+            header
+            composer(editorHeight: 190)
+            Button(action: submit) {
+                Label(catalogQuery != nil ? "Find on Apple Music" : player.isCreating ? "Queue song" :
+                        melody != nil ? "Create cover" : player.remixSource == nil ? "Create song" : "Remix song",
+                      systemImage: catalogQuery == nil ? "waveform" : "music.note")
+                    .font(.headline)
+                    .frame(maxWidth: .infinity, minHeight: 45)
+                    .foregroundStyle(canSubmit ? Color(red: 0.12, green: 0.08, blue: 0.22) : .white.opacity(0.55))
+                    .background {
+                        RoundedRectangle(cornerRadius: 12)
+                            .fill(canSubmit ? AnyShapeStyle(LinearGradient(colors: [DesktopColors.accent, Color(red: 0.91, green: 0.68, blue: 0.92)], startPoint: .leading, endPoint: .trailing)) : AnyShapeStyle(Color.white.opacity(0.10)))
+                    }
+            }
+            .buttonStyle(.plain)
+            .disabled(!canSubmit)
+            .accessibilityIdentifier("create-song")
+            if hasPrompt && melody == nil {
+                Button("Save idea", systemImage: "bookmark") { saveIdea() }
+                    .buttonStyle(.plain)
+                    .font(.subheadline.weight(.medium))
+                    .foregroundStyle(DesktopColors.accent)
+            }
+            if prompt.isEmpty { suggestions }
+            if saved {
+                Label("Saved to your library", systemImage: "checkmark.circle.fill")
+                    .font(.subheadline).foregroundStyle(DesktopColors.accent).accessibilityIdentifier("idea-saved")
+            }
+            if !player.canGenerate {
+                Button("Download the music model") { showModelSetup = true }
+                    .font(.footnote.weight(.semibold))
+            }
+            if player.isCreating {
+                Button("Generation details", systemImage: "arrow.up.right.square") { showGeneration = true }
+                    .buttonStyle(.borderless)
+                    .accessibilityIdentifier("open-generation-progress")
+            }
+        }
+        .padding(18)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+    #endif
+
     private var header: some View {
         HStack(spacing: 10) {
-            Text("Create").font(.largeTitle.weight(.semibold)).accessibilityAddTraits(.isHeader)
+            Text("Create").font(.largeTitle.weight(.medium)).accessibilityAddTraits(.isHeader)
             Spacer(minLength: 4)
             Menu {
-                if player.canStreamAcoustics {
+                if player.canStreamAcoustics && melody == nil {
                     Picker("Rendering", selection: Binding(get: { acoustics }, set: { choice in
                         if instrumental { preferredInstrumentalAcoustics = choice.rawValue }
                         else { preferredVocalAcoustics = choice.rawValue }
@@ -153,30 +308,64 @@ struct CreateSongView: View {
                         Text("High quality").tag(CreateAcoustics.reference)
                     }
                 }
-                Picker("Song length", selection: Binding(get: { length }, set: { preferredLength = $0.rawValue })) {
-                    Text("Automatic").tag(CreateLength.automatic)
-                    Text("Full song (2 min or more)").tag(CreateLength.fullSong)
-                    if player.canCreateExtended {
-                        Text("Extended (3½ min or more)").tag(CreateLength.extended)
+                Menu("Advanced rendering") {
+                Picker("Full-song rendering steps", selection: $renderingSteps) {
+                    Text("8 steps (faster)").tag(RenderingSteps.eight)
+                    Text("16 steps").tag(RenderingSteps.sixteen)
+                    Text("32 steps (highest quality)").tag(RenderingSteps.thirtyTwo)
+                }
+                if melody == nil {
+                    Picker("Song length", selection: Binding(get: { length }, set: { preferredLength = $0.rawValue })) {
+                        Text("Automatic").tag(CreateLength.automatic)
+                        Text("Full song (2 min or more)").tag(CreateLength.fullSong)
+                        if player.canCreateExtended {
+                            Text("Extended (3½ min or more)").tag(CreateLength.extended)
+                        }
                     }
                 }
                 Toggle("Follow style closely", isOn: $followStyleClosely)
+                if canPlanVocalScore && !instrumental {
+                    Toggle("Plan melody and chords", isOn: $planScore)
+                    #if os(macOS)
+                    if planScore {
+                        Toggle("Compact attention cache", isOn: $compactAttentionCache)
+                            .help("Uses a smaller cache during melody planning. The same seed can produce a different take.")
+                    }
+                    #endif
+                }
                 if !instrumental { Toggle("Clear lead vocals", isOn: $clearLeadVocals) }
+                }
+                #if !os(macOS)
                 Button("Save idea", systemImage: "bookmark") { saveIdea() }.disabled(!canCreate)
+                #endif
                 Button("Songwriting settings", systemImage: "key") { showSongwritingSettings = true }
             } label: {
                 HStack(spacing: 7) {
+                    #if os(macOS)
+                    Image(systemName: "slider.horizontal.3")
+                    Text("Song options")
+                    #else
                     Image(systemName: "cpu")
                     Text("Metal")
+                    #endif
                     Image(systemName: "chevron.down").font(.caption2.weight(.bold))
                 }
                 .font(.subheadline.weight(.medium))
                 .foregroundStyle(player.canGenerate ? accent : .white.opacity(0.65))
                 .padding(.horizontal, 13).frame(minHeight: 44)
+                #if os(macOS)
+                .desktopGlass(in: Capsule(), interactive: true)
+                #else
                 .background(.white.opacity(0.07), in: Capsule())
+                #endif
             }
             .accessibilityLabel("Create options")
-            .accessibilityValue(player.canGenerate ? "Metal" : "Metal unavailable")
+            .accessibilityValue(player.canGenerate ? (acoustics == .streaming ? "Early playback" : "High quality, \(renderingSteps.rawValue) steps") : "Music model unavailable")
+            #if os(macOS)
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            #endif
         }
     }
 
@@ -191,13 +380,13 @@ struct CreateSongView: View {
                         .background(.white.opacity(0.06), in: Circle())
                 }
                 .buttonStyle(.plain)
-                .disabled(polishingPrompt || !canCreate)
+                .disabled(polishingPrompt || !hasPrompt)
                 .accessibilityLabel(polishingPrompt ? "Polishing prompt" : "Polish prompt")
                 .accessibilityIdentifier("polish-prompt")
             }
             ZStack(alignment: .topLeading) {
                 if prompt.isEmpty {
-                    Text("Describe a song, a feeling, or an idea…")
+                    Text(melody == nil ? "Describe a song, a feeling, or an idea…" : "Describe the new arrangement…")
                         .foregroundStyle(.white.opacity(0.48))
                         .padding(.horizontal, 3).padding(.vertical, 8)
                         .allowsHitTesting(false).accessibilityHidden(true)
@@ -216,8 +405,23 @@ struct CreateSongView: View {
                 Button { promptFocused = false; showSamplePicker = true } label: {
                     composerChip("Reference", symbol: "waveform", selected: player.remixSource != nil || referenceTask != nil)
                 }.accessibilityIdentifier("add-sample")
+                #if os(macOS)
+                Button { promptFocused = false; showMelody = true } label: {
+                    composerChip("Melody", symbol: "music.note.list", selected: melody != nil)
+                }.accessibilityIdentifier("add-melody")
+                #endif
             }.buttonStyle(.plain)
-            if let title = player.remixSource?.title ?? sampleName {
+            if let melody {
+                HStack {
+                    Label(melody.title, systemImage: "music.note.list").lineLimit(1)
+                    Spacer(minLength: 0)
+                    Button { self.melody = nil } label: {
+                        Image(systemName: "xmark").frame(width: 44, height: 44)
+                    }.accessibilityLabel("Remove melody")
+                }
+                .font(.subheadline).buttonStyle(.plain).padding(.leading, 12)
+                .background(.white.opacity(0.07), in: RoundedRectangle(cornerRadius: 13))
+            } else if let title = player.remixSource?.title ?? sampleName {
                 HStack(spacing: 7) {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(title).font(.subheadline.weight(.medium)).lineLimit(1)
@@ -243,12 +447,17 @@ struct CreateSongView: View {
             }
         }
         .padding(14).frame(maxWidth: .infinity, alignment: .leading)
+        #if os(macOS)
+        .overlay(alignment: .bottom) {
+            Rectangle().fill(.white.opacity(0.24)).frame(height: 1)
+        }
+        #else
         .background {
             RoundedRectangle(cornerRadius: 24).fill(.linearGradient(
                 colors: [Color(red: 0.105, green: 0.10, blue: 0.16), Color(red: 0.065, green: 0.066, blue: 0.09)],
                 startPoint: .topLeading, endPoint: .bottomTrailing))
         }
-        .overlay { RoundedRectangle(cornerRadius: 24).strokeBorder(.white.opacity(0.12)).allowsHitTesting(false) }
+        #endif
     }
 
     private var suggestions: some View {
@@ -334,7 +543,7 @@ struct CreateSongView: View {
                 .accessibilityElement(children: .contain).accessibilityIdentifier("create-dock")
         } else {
             Button(action: submit) {
-                Label(catalogQuery == nil ? (player.remixSource == nil ? "Create" : "Remix") : "Find on Apple Music",
+                Label(catalogQuery == nil ? (melody != nil ? "Create Cover" : (player.remixSource == nil ? "Create" : "Remix")) : "Find on Apple Music",
                       systemImage: catalogQuery == nil ? "waveform" : "music.note")
                     .font(.headline).frame(maxWidth: .infinity).padding(.vertical, 12).frame(minHeight: 52)
                     .foregroundStyle(canSubmit ? .black : .white.opacity(0.48))
@@ -465,16 +674,25 @@ struct CreateSongView: View {
         enqueue()
     }
 
+    private func prepareRendering() {
+        player.prepareRendering(acoustics, compactAttentionCache: usesCompactAttentionCache,
+                                preferFullPrecision: renderingSteps == .thirtyTwo && player.remixSource == nil)
+    }
+
     private func enqueue() {
         var reference = player.remixSource
         if let attached = reference { reference?.openingFrames = min(attached.openingFrames, maximumReferenceFrames) }
-        let idea = hasPrompt ? prompt.trimmingCharacters(in: .whitespacesAndNewlines) : "Remix \(reference?.title ?? "the reference")"
+        let fallback = melody.map { "Cover of \($0.title)" } ?? "Remix \(reference?.title ?? "the reference")"
+        let idea = hasPrompt ? prompt.trimmingCharacters(in: .whitespacesAndNewlines) : fallback
         player.generateSong(idea: idea, instrumental: instrumental,
                             preparedLyrics: instrumental ? nil : lyrics.trimmingCharacters(in: .whitespacesAndNewlines),
-                            createStyles: styles, createLength: length, acoustics: acoustics, reference: reference,
-                            followStyleClosely: followStyleClosely, clearLeadVocals: clearLeadVocals)
+                            createStyles: styles, createLength: length, acoustics: acoustics, renderingSteps: renderingSteps,
+                            reference: reference,
+                            followStyleClosely: followStyleClosely, clearLeadVocals: clearLeadVocals, planScore: planScore,
+                            compactAttentionCache: usesCompactAttentionCache, scoreABC: melody?.score.notation)
         prompt = ""; styles = ""; lyrics = ""; instrumental = false; saved = false
         clearSample()
+        melody = nil
     }
 
     private func composerChip(_ title: String, symbol: String, selected: Bool) -> some View {
@@ -505,6 +723,7 @@ struct CreateSongView: View {
         }
     }
     private func loadReference(_ url: URL) {
+        melody = nil
         clearSample()
         sampleName = url.deletingPathExtension().lastPathComponent
         if !["csv", "txt", "json"].contains(url.pathExtension.lowercased()) { loadSample(url) }
@@ -548,6 +767,133 @@ struct CreateSongView: View {
         sampleURL = nil; sampleName = nil
     }
 }
+
+private struct MelodyReference {
+    let title: String
+    let score: YuE2Score
+}
+
+#if os(macOS)
+private struct MelodyReferenceSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    let canRender: Bool
+    let attach: (MelodyReference) -> Void
+    #if !VIBEPLAYER_APP_STORE
+    private let transcriber = YuE2Transcriber()
+    #endif
+    @State private var title: String
+    @State private var notation: String
+    @State private var transcription: Task<Void, Never>?
+    @State private var error: String?
+
+    init(reference: MelodyReference?, canRender: Bool, attach: @escaping (MelodyReference) -> Void) {
+        self.canRender = canRender
+        self.attach = attach
+        _title = State(initialValue: reference?.title ?? "Reference Melody")
+        _notation = State(initialValue: reference?.score.notation ?? "")
+    }
+
+    var body: some View {
+        let score = try? YuE2Score(notation)
+        VStack(alignment: .leading, spacing: 16) {
+            Text("Reference Melody").font(.title2.bold())
+            #if VIBEPLAYER_APP_STORE
+            Text("Open an ABC score and review the notes before creating a new arrangement.")
+                .foregroundStyle(.secondary)
+            #else
+            Text("Transcribe a song or open an ABC score. Review the notes before creating a new arrangement.")
+                .foregroundStyle(.secondary)
+            #endif
+            HStack {
+                #if !VIBEPLAYER_APP_STORE
+                Button("Choose Song…") { chooseFile(asAudio: true) }
+                    .disabled(!transcriber.isAvailable || transcription != nil)
+                #endif
+                Button("Open ABC…") { chooseFile(asAudio: false) }
+                    .disabled(transcription != nil)
+                Spacer()
+                if transcription != nil {
+                    ProgressView().controlSize(.small)
+                    Text("Transcribing melody…").foregroundStyle(.secondary)
+                }
+            }
+            #if !VIBEPLAYER_APP_STORE
+            if !transcriber.isAvailable {
+                Text("Install SheetSage2 to transcribe audio. You can still open an ABC score.")
+                    .font(.callout).foregroundStyle(.secondary)
+            }
+            #endif
+            if !canRender {
+                Text("Download the music model in Create to render a cover.")
+                    .font(.callout).foregroundStyle(.secondary)
+            }
+            TextEditor(text: $notation)
+                .font(.system(.body, design: .monospaced))
+                .frame(minHeight: 192)
+                .border(.quaternary)
+                .accessibilityLabel("ABC score")
+                .disabled(transcription != nil)
+            if let error { Text(error).font(.callout).foregroundStyle(.red) }
+            HStack {
+                Button("Save ABC…") { if let score { save(score) } }
+                    .disabled(score == nil || transcription != nil)
+                Spacer()
+                Button("Cancel", role: .cancel) { dismiss() }
+                    .keyboardShortcut(.cancelAction)
+                Button("Use Melody") {
+                    guard let score else { return }
+                    attach(.init(title: title, score: score))
+                    dismiss()
+                }
+                .buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction)
+                .disabled(!canRender || score == nil || transcription != nil)
+            }
+        }
+        .padding(24).frame(minWidth: 520, idealWidth: 600, minHeight: 380)
+        .onDisappear { transcription?.cancel() }
+    }
+
+    private func chooseFile(asAudio: Bool) {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = asAudio ? [.audio] : [UTType(filenameExtension: "abc") ?? .plainText, .plainText]
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        error = nil
+        #if !VIBEPLAYER_APP_STORE
+        if asAudio {
+            transcription = Task {
+                defer { transcription = nil }
+                do {
+                    let score = try await transcriber.transcribe(url)
+                    try Task.checkCancellation()
+                    update(score, from: url)
+                } catch is CancellationError {
+                } catch {
+                    if !Task.isCancelled { self.error = error.localizedDescription }
+                }
+            }
+            return
+        }
+        #endif
+        let scoped = url.startAccessingSecurityScopedResource()
+        defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+        do { update(try YuE2Score(contentsOf: url), from: url) }
+        catch { self.error = error.localizedDescription }
+    }
+
+    private func update(_ score: YuE2Score, from url: URL) {
+        title = url.deletingPathExtension().lastPathComponent
+        notation = score.notation
+    }
+
+    private func save(_ score: YuE2Score) {
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = "\(title).abc"
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do { try Data(score.notation.utf8).write(to: url, options: .atomic) }
+        catch { self.error = error.localizedDescription }
+    }
+}
+#endif
 
 private struct AppleMusicResults: View {
     let query: AppleMusicQuery
@@ -597,12 +943,16 @@ private struct SongTextEditor: View {
     let kind: Kind
     let idea: String
     let styles: String
+    let length: CreateLength
+    let clearLeadVocals: Bool
+    let showsPromptUsage: Bool
     @State private var draft: String
     @State private var instrumentalDraft: Bool
     @State private var working = false
     @State private var task: Task<Void, Never>?
     @State private var operationID: UUID?
     @State private var editorError: String?
+    @State private var promptUsage: MusicPromptUsage?
     @State private var undoHistory: [String] = []
     @State private var redoHistory: [String] = []
     @State private var changingHistory = false
@@ -610,8 +960,12 @@ private struct SongTextEditor: View {
     @AppStorage("saved-song-lyrics") private var savedLyrics = ""
     @FocusState private var focused: Bool
 
-    init(kind: Kind, value: Binding<String>, instrumental: Binding<Bool>, idea: String, styles: String) {
+    init(kind: Kind, value: Binding<String>, instrumental: Binding<Bool>, idea: String, styles: String,
+         length: CreateLength = .automatic, clearLeadVocals: Bool = false, showsPromptUsage: Bool = true) {
         self.kind = kind; self._value = value; self._instrumental = instrumental; self.idea = idea; self.styles = styles
+        self.length = length
+        self.clearLeadVocals = clearLeadVocals
+        self.showsPromptUsage = showsPromptUsage
         _draft = State(initialValue: value.wrappedValue); _instrumentalDraft = State(initialValue: instrumental.wrappedValue)
     }
     private var title: String { kind == .styles ? "Styles" : "Lyrics" }
@@ -627,17 +981,23 @@ private struct SongTextEditor: View {
                     Toggle("Instrumental", isOn: $instrumentalDraft).tint(.white).font(.subheadline)
                     Text(instrumentalDraft ? "Your lyrics are kept here if you turn this off." : "Leave this empty and lyrics will be written for you when creating.")
                         .font(.footnote).foregroundStyle(.secondary)
+                    if !instrumentalDraft, let promptUsage {
+                        Text("\(promptUsage.count) of \(promptUsage.limit) model tokens, including sound description")
+                            .font(.footnote)
+                            .foregroundStyle(promptUsage.count > promptUsage.limit ? Color.orange : Color.secondary)
+                    }
                 }
                 HStack(alignment: .top, spacing: 12) {
                     ZStack(alignment: .topLeading) {
                         if draft.isEmpty {
                             Text(kind == .styles ? "Describe what you want your song to sound like" : "[Verse 1]\nWrite your story here…\n\n[Chorus]\nMake something they can't forget.")
-                                .foregroundStyle(.white.opacity(0.28)).padding(.vertical, 8).allowsHitTesting(false)
+                                .foregroundStyle(.white.opacity(0.62)).padding(.vertical, 8).allowsHitTesting(false)
                         }
                         TextEditor(text: $draft).focused($focused).scrollContentBackground(.hidden).padding(.horizontal, -4)
                             .disabled(kind == .lyrics && instrumentalDraft)
                             .accessibilityLabel(title).accessibilityIdentifier(kind == .styles ? "styles-editor" : "lyrics-editor")
                     }
+                    #if !os(macOS)
                     VStack(spacing: 4) {
                         Menu {
                             Button("Save \(title.lowercased())", systemImage: "bookmark") {
@@ -654,20 +1014,59 @@ private struct SongTextEditor: View {
                         Button { finish() } label: { Image(systemName: "checkmark").font(.headline.bold()).foregroundStyle(.white).frame(width: 48, height: 48).background(Color(red: 1, green: 0.2, blue: 0.42), in: Circle()) }
                             .accessibilityLabel("Done")
                     }.font(.title3).padding(5).background(.white.opacity(0.12), in: Capsule()).overlay(Capsule().stroke(.white.opacity(0.12)))
+                    #endif
                 }.frame(maxHeight: .infinity)
+                    .task(id: draft) {
+                        guard kind == .lyrics, showsPromptUsage else { return }
+                        let text = draft
+                        do {
+                            try await Task.sleep(for: .milliseconds(180))
+                            let usage = try await player.createPromptUsage(idea: idea, styles: styles, lyrics: text,
+                                                                          length: length, clearLeadVocals: clearLeadVocals)
+                            if !Task.isCancelled { promptUsage = usage }
+                        } catch is CancellationError {
+                        } catch {
+                            if !Task.isCancelled { promptUsage = nil }
+                        }
+                    }
                 if kind == .styles {
                     ScrollView(.horizontal, showsIndicators: false) {
                         HStack(spacing: 8) {
                             ForEach(["mellow", "orchestral", "R&B", "synthwave", "atmospheric", "lo-fi"] +
                                     vocalLanguages.map { "\($0) vocals" }, id: \.self) { suggestion in
                                 Button(suggestion) { draft += draft.isEmpty ? suggestion : ", " + suggestion }
-                                    .font(.subheadline).padding(.horizontal, 16).frame(height: 42).vibeGlass()
+                                    .font(.subheadline).padding(.horizontal, 16).frame(height: 42)
+                                    .background(.white.opacity(0.10), in: Capsule())
                             }
-                        }
+                        }.buttonStyle(.plain)
                     }
                 }
-            }.padding(22).frame(maxWidth: 680).frame(maxWidth: .infinity)
-                .background(Color(white: 0.1)).vibeInlineTitle()
+                #if os(macOS)
+                HStack(spacing: 10) {
+                    Menu("More", systemImage: "ellipsis.circle") {
+                        Button("Save \(title.lowercased())") {
+                            if kind == .styles { savedStyles = draft } else { savedLyrics = draft }
+                        }.disabled(draft.isEmpty)
+                        Button("Restore saved \(title.lowercased())") { draft = savedText }.disabled(savedText.isEmpty)
+                        Divider()
+                        Button("Undo", action: undo).disabled(undoHistory.isEmpty)
+                        Button("Redo", action: redo).disabled(redoHistory.isEmpty)
+                        Button("Clear \(title.lowercased())") { draft = "" }.disabled(draft.isEmpty)
+                    }
+                    Button { polish() } label: {
+                        Label(working ? "Working…" : (draft.isEmpty && kind == .lyrics ? "Write lyrics" : "Polish"), systemImage: "wand.and.stars")
+                    }.disabled(!canPolish)
+                        .accessibilityIdentifier(kind == .styles ? "polish-styles" : "polish-lyrics")
+                    Spacer(minLength: 8)
+                    Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
+                    Button("Done") { finish() }.keyboardShortcut(.defaultAction)
+                        .buttonStyle(.borderedProminent).tint(DesktopColors.accent)
+                }
+                .padding(.top, 6)
+                #endif
+            }.padding(22).frame(maxWidth: 780).frame(maxWidth: .infinity)
+                .songEditorBackground().vibeInlineTitle()
+                #if !os(macOS)
                 .toolbar {
                     ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
                     ToolbarItemGroup(placement: .primaryAction) {
@@ -676,6 +1075,7 @@ private struct SongTextEditor: View {
                         Button { draft = "" } label: { Image(systemName: "trash") }.disabled(draft.isEmpty).accessibilityLabel("Clear \(title.lowercased())")
                     }
                 }
+                #endif
         }
         .onChange(of: draft) { oldValue, _ in
             if changingHistory { changingHistory = false; return }
@@ -715,6 +1115,20 @@ private struct SongTextEditor: View {
     }
 }
 
+private extension View {
+    @ViewBuilder func songEditorBackground() -> some View {
+        #if os(macOS)
+        self.background {
+            LinearGradient(colors: [Color(red: 0.25, green: 0.14, blue: 0.34),
+                                    Color(red: 0.12, green: 0.13, blue: 0.27)],
+                           startPoint: .topLeading, endPoint: .bottomTrailing).ignoresSafeArea()
+        }
+        #else
+        self.background(Color(white: 0.1))
+        #endif
+    }
+}
+
 private struct SongwritingSettings: View {
     @Environment(\.dismiss) private var dismiss
     @State private var key = ""
@@ -723,12 +1137,17 @@ private struct SongwritingSettings: View {
     @State private var testing = false
     @State private var verified = false
     @State private var testTask: Task<Void, Never>?
+    @State private var localModel = SongwritingModelDownload.shared
+    @AppStorage(GeminiKeyStore.cloudConsentKey) private var useGemini = false
 
     var body: some View {
         NavigationStack {
             Form {
                 Section {
-                    SecureField(hasKey ? "Replace saved key" : "Paste API key", text: Binding(get: { key }, set: { key = $0; verified = false }))
+                    Toggle("Send songwriting text to Gemini", isOn: $useGemini)
+                        .disabled(testing)
+                    if useGemini {
+                    SecureField(hasKey ? "Replace saved key" : "API key", text: Binding(get: { key }, set: { key = $0; verified = false }))
                         .vibeTextInput()
                         .accessibilityIdentifier("gemini-api-key")
                         .disabled(testing)
@@ -745,10 +1164,11 @@ private struct SongwritingSettings: View {
                     } label: {
                         if testing { Label("Testing key…", systemImage: "hourglass") }
                         else { Text("Test and save key") }
-                    }.disabled(testing || key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    }.disabled(!useGemini || testing || key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                     if verified {
                         Label("Connection successful", systemImage: "checkmark.circle.fill")
                             .accessibilityIdentifier("gemini-key-verified")
+                    }
                     }
                     if hasKey {
                         Label("Key saved on this device", systemImage: "checkmark.circle")
@@ -758,11 +1178,53 @@ private struct SongwritingSettings: View {
                         }.disabled(testing)
                     }
                 } header: {
-                    Text("Gemini API key")
+                    Text("Gemini (optional)")
                 } footer: {
-                    Text("With a key, infetit radio sends songwriting requests to Gemini. Apple Intelligence can write on this device when you’re offline or have no key. Saving a key sends a short test prompt to Gemini and stores the key in this device’s Keychain.")
+                    Text("When enabled, songwriting prompts and draft lyrics are sent to Google. Testing a key sends a short test prompt; the key is stored in your Keychain.")
+                }
+                Section {
+                    if let progress = localModel.progress {
+                        ProgressView(value: progress) { Text("Downloading LFM3 1.7B…") }
+                        HStack {
+                            Text("\(Int(progress * 100))%")
+                            Spacer()
+                            if let remaining = localModel.remaining {
+                                Text(remaining < 60 ? "Less than a minute left" : "About \(Duration.seconds(remaining).formatted(.units(allowed: [.hours, .minutes], width: .abbreviated, maximumUnitCount: 2))) left")
+                            } else { Text("Estimating time…") }
+                        }.font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+                        Button("Cancel download") { localModel.cancel() }
+                    } else if localModel.installed {
+                        Label("Local model ready", systemImage: "checkmark.circle")
+                        Button("Remove download", role: .destructive) { localModel.remove() }
+                    } else if LiquidSongwriting.isSupported {
+                        Button("Download LFM3 1.7B · about 1 GB") { localModel.download() }
+                    } else {
+                        Text("The local model requires an Apple silicon device with at least 6 GB of memory.")
+                    }
+                    Link("Model and license", destination: URL(string: LiquidSongwriting.repository)!)
+                    if let error = localModel.error {
+                        Text(error).foregroundStyle(.secondary)
+                    }
+                } header: {
+                    Text("On-device lyrics")
+                } footer: {
+                    Text("When Apple Intelligence is unavailable, infetit radio can write lyrics and polish prompts with this download. The model comes from Hugging Face and runs on your device.")
+                }
+                if let url = Bundle.main.url(forResource: "PRIVACY", withExtension: "md") {
+                    NavigationLink("Privacy policy") {
+                        ScrollView {
+                            Text((try? AttributedString(markdown: String(contentsOf: url, encoding: .utf8),
+                                                        options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString())
+                                .frame(maxWidth: 600, alignment: .leading)
+                                .padding(20)
+                        }
+                        .navigationTitle("Privacy policy")
+                    }
                 }
             }
+            #if os(macOS)
+            .formStyle(.grouped)
+            #endif
             .navigationTitle("Songwriting")
             .vibeInlineTitle()
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
@@ -779,7 +1241,7 @@ private struct SongwritingSettings: View {
 
     private func testAndSaveKey() {
         let candidate = key.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !candidate.isEmpty, !testing else { return }
+        guard useGemini, !candidate.isEmpty, !testing else { return }
         verified = false
         testing = true
         testTask = Task {
@@ -876,5 +1338,78 @@ struct SongIdeaDetail: View {
                 Button("Delete idea", role: .destructive) { player.deleteIdea(idea.id); dismiss() }.padding(.top, 16)
             }.frame(maxWidth: 620, alignment: .leading).padding(22).frame(maxWidth: .infinity)
         }.background(Color(red: 0.045, green: 0.045, blue: 0.055)).navigationTitle("Song idea").vibeInlineTitle()
+    }
+}
+
+@MainActor @Observable
+final class SongwritingModelDownload {
+    static let shared = SongwritingModelDownload()
+    private(set) var installed = LiquidSongwriting.isInstalled
+    private(set) var progress: Double?
+    private(set) var error: String?
+    private var task: Task<Void, Never>?
+    private var downloadID: UUID?
+    private var startedAt: Date?
+    #if os(macOS)
+    private var activity: NSObjectProtocol?
+    #endif
+    var remaining: TimeInterval? {
+        guard let progress, progress > 0.001, progress < 1, let startedAt else { return nil }
+        let elapsed = Date().timeIntervalSince(startedAt)
+        guard elapsed > 2 else { return nil }
+        return elapsed * (1 - progress) / progress
+    }
+
+    func download() {
+        guard task == nil else { return }
+        let id = UUID()
+        downloadID = id
+        error = nil
+        progress = 0
+        startedAt = nil
+        #if os(macOS)
+        activity = ProcessInfo.processInfo.beginActivity(options: [.idleSystemSleepDisabled, .idleDisplaySleepDisabled], reason: "Downloading the songwriting model")
+        #endif
+        task = Task {
+            defer {
+                #if os(macOS)
+                if let activity { ProcessInfo.processInfo.endActivity(activity); self.activity = nil }
+                #endif
+                startedAt = nil
+                downloadID = nil
+                progress = nil
+                task = nil
+                installed = LiquidSongwriting.isInstalled
+            }
+            do {
+                try await LiquidSongwriting.shared.download { value in
+                    Task { @MainActor in
+                        guard self.downloadID == id else { return }
+                        if self.startedAt == nil && value > 0 { self.startedAt = Date() }
+                        self.progress = max(self.progress ?? 0, value)
+                    }
+                }
+            } catch {
+                if !Task.isCancelled { self.error = error.localizedDescription }
+            }
+        }
+    }
+
+    func cancel() {
+        task?.cancel()
+    }
+
+    func remove() {
+        guard task == nil else { return }
+        error = nil
+        task = Task {
+            defer { task = nil }
+            do {
+                try await LiquidSongwriting.shared.removeDownload()
+                installed = false
+            } catch {
+                self.error = error.localizedDescription
+            }
+        }
     }
 }

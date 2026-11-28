@@ -45,6 +45,54 @@ kernel void project_q4(device const ushort *weights [[buffer(0)]],
     }
 }
 
+// Reuse each input load for both Q4 projections and write the activated gate.
+kernel void project_q4_gate_up(
+    device const ushort *gate_weights [[buffer(0)]],
+    device const half *gate_scales [[buffer(1)]],
+    device const ushort *up_weights [[buffer(2)]],
+    device const half *up_scales [[buffer(3)]],
+    device const half4 *input [[buffer(4)]],
+    device half *output [[buffer(5)]],
+    constant uint2 &shape [[buffer(6)]],
+    uint group [[threadgroup_position_in_grid]],
+    ushort lane [[thread_index_in_simdgroup]],
+    ushort simd [[simdgroup_index_in_threadgroup]]) {
+    uint row = group * projectionRows + simd;
+    if (row >= shape.y) return;
+    uint columns = shape.x / 4;
+    const device ushort *gate = gate_weights + row * columns;
+    const device ushort *up = up_weights + row * columns;
+    const device half *gs = gate_scales + row * (columns / 8);
+    const device half *us = up_scales + row * (columns / 8);
+    float gate0 = 0, gate1 = 0, up0 = 0, up1 = 0;
+#ifdef YUE2_M3_MAX
+    #pragma clang loop unroll_count(4)
+#endif
+    for (uint i = lane; i < columns; i += 32) {
+        ushort g = gate[i], u = up[i];
+        short4 qg = short4(g & 15, (g >> 4) & 15, (g >> 8) & 15, g >> 12);
+        short4 qu = short4(u & 15, (u >> 4) & 15, (u >> 8) & 15, u >> 12);
+        float4 x0 = float4(input[i]), x1 = float4(input[columns + i]);
+        gate0 += float(gs[i / 8]) * dot(float4((qg ^ 8) - 8), x0);
+        gate1 += float(gs[i / 8]) * dot(float4((qg ^ 8) - 8), x1);
+        up0 += float(us[i / 8]) * dot(float4((qu ^ 8) - 8), x0);
+        up1 += float(us[i / 8]) * dot(float4((qu ^ 8) - 8), x1);
+    }
+    gate0 = simd_sum(gate0);
+    gate1 = simd_sum(gate1);
+    up0 = simd_sum(up0);
+    up1 = simd_sum(up1);
+    if (lane == 0) {
+        // Preserve the FP16 stores between the separate projection and activation kernels.
+        thread volatile half g0 = half(gate0), g1 = half(gate1);
+        thread volatile half u0 = half(up0), u1 = half(up1);
+        float a = float(g0), b = float(g1);
+        thread volatile half act0 = half(a / (1.0f + exp(-a)));
+        thread volatile half act1 = half(b / (1.0f + exp(-b)));
+        output[row] = half(float(act0) * float(u0));
+        output[shape.y + row] = half(float(act1) * float(u1));
+    }
+}
 // Two songs share each weight read, keeping each guidance branch's reduction order.
 kernel void project_q4_four(device const ushort *weights [[buffer(0)]],
                        device const half *scales [[buffer(1)]],

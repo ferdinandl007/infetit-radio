@@ -1,0 +1,7 @@
+// Pass this configuration to xcodebuild when archiving for the App Store.
+SWIFT_ACTIVE_COMPILATION_CONDITIONS = $(inherited) VIBEPLAYER_APP_STORE
+CODE_SIGN_ENTITLEMENTS[sdk=macosx*] = $(VIBEPLAYER_MAC_STORE_ENTITLEMENTS)
+ENABLE_HARDENED_RUNTIME[sdk=macosx*] = YES
+VIBEPLAYER_STORE_ARCHIVE = NO
+// The model runtime and shipped Metal libraries require Apple silicon.
+ARCHS[sdk=macosx*] = arm64

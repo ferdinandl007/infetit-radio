@@ -34,6 +34,9 @@ struct SavedSong: Identifiable, Codable {
 private struct GeneratedTrack {
     let url: URL
     let request: MusicGenerationRequest
+    #if os(macOS)
+    let broadcastID = UUID()
+    #endif
     var duration: TimeInterval = 0
     var semanticTokens: [Int] = []
     var radioTitle: String?
@@ -49,9 +52,13 @@ struct CreationJob: Identifiable {
     let renderer: CreateRenderer
     let length: CreateLength
     let acoustics: CreateAcoustics
+    let renderingSteps: RenderingSteps
+    let planScore: Bool
+    let compactAttentionCache: Bool
     let followStyleClosely: Bool
     let clearLeadVocals: Bool
     let reference: MusicReference?
+    let scoreABC: String?
     var title: String { idea.split(whereSeparator: \.isWhitespace).prefix(6).joined(separator: " ") }
 }
 
@@ -280,16 +287,35 @@ final class PlayerStore: NSObject, AVAudioPlayerDelegate {
     private var radioPlaylist: [GeneratedTrack] = []
     private var radioPlaybackIndex: Int?
     private var preparedRadioSeed: UInt64?
+    private var radioRenderTiming: RadioRenderTiming?
     let radioQueueCapacity = 10
     private var radioArrangement = Int.random(in: MusicPromptBuilder.radioArrangements.indices)
     private var usedRadioTitles: Set<String> = []
     private var currentSavedID: UUID?
+    var currentSavedSongID: UUID? { currentSavedID }
     private(set) var radioMode = true
     private var radioWantsPlayback = false
     private var radioPreloading = false
     private var radioPreparationSuspended = false
     #if os(macOS)
     private var radioActivity: NSObjectProtocol?
+    let webRadio = WebRadio()
+
+    var webRadioSnapshot: WebRadioSnapshot {
+        let live = radioMode && isPlaying && currentTrack?.request.purpose == .radio && audio?.isPlaying == true
+        let station = live ? currentTrack?.request.stationName ?? selected.name : selected.name
+        return WebRadioSnapshot(station: station, description: selected.subtitle, title: live ? trackName : nil,
+                                state: live ? "live" : (isWaitingForRadio ? "preparing" : "off-air"),
+                                position: live ? audio?.currentTime ?? 0 : 0, duration: live ? duration : 0)
+    }
+
+    var webRadioTracks: [WebRadioTrack] {
+        guard radioMode else { return [] }
+        var tracks: [GeneratedTrack] = []
+        if let currentTrack, currentTrack.request.purpose == .radio { tracks.append(currentTrack) }
+        if radioPlaylist.indices.contains(nextRadioIndex) { tracks.append(radioPlaylist[nextRadioIndex]) }
+        return tracks.map { WebRadioTrack(id: $0.broadcastID, url: $0.url) }
+    }
     #else
     private var radioRenderingInForeground = true
     #endif
@@ -332,7 +358,17 @@ final class PlayerStore: NSObject, AVAudioPlayerDelegate {
     var canGenerate: Bool { generationBackend.isAvailable }
     var canUsePairedMetal: Bool { generationBackend.canUsePairedMetal }
     var canStreamAcoustics: Bool { generationBackend.canStreamAcoustics }
-    func prepareEarlyPlayback() { generationBackend.prepareEarlyPlayback() }
+    var canPlanScore: Bool { generationBackend.canPlanScore }
+    var canRenderMelody: Bool {
+        #if os(macOS)
+        canGenerate
+        #else
+        false
+        #endif
+    }
+    func prepareRendering(_ acoustics: CreateAcoustics, compactAttentionCache: Bool = false, preferFullPrecision: Bool = false) {
+        generationBackend.prepareRendering(acoustics, compactAttentionCache: compactAttentionCache, preferFullPrecision: preferFullPrecision)
+    }
     var canCreateExtended: Bool { generationBackend.canCreateExtended }
     private var nextRadioIndex: Int { (radioPlaybackIndex ?? -1) + 1 }
     var radioReadyCount: Int { min(radioQueueCapacity, radioPlaylist.count - nextRadioIndex) }
@@ -372,7 +408,7 @@ final class PlayerStore: NSObject, AVAudioPlayerDelegate {
     var isPlayingLastCreatedSong: Bool { lastCreatedSong?.id != nil && currentSavedID == lastCreatedSong?.id && isPlaying }
     private var timer: Timer?
     private let defaultsKey = "vibe-player-vibes-v1"
-    private let generationBackend: any MusicGenerationBackend
+    private var generationBackend: any MusicGenerationBackend
     private let lyricsWriter: any LyricsWriter
     private var generationTask: Task<Void, Never>?
     private var automaticGenerationTask: Task<Void, Never>?
@@ -380,6 +416,15 @@ final class PlayerStore: NSObject, AVAudioPlayerDelegate {
 
     var selectedIndex: Int { vibes.firstIndex(where: { $0.id == selectedID }) ?? 0 }
     var selected: Vibe { vibes[selectedIndex] }
+
+    @discardableResult
+    func reloadMusicModel() -> Bool {
+        guard !isGenerating, !isCreating else { return false }
+        let backend = YuE2GenerationBackend()
+        guard backend.isAvailable else { return false }
+        generationBackend = backend
+        return true
+    }
 
     override convenience init() { self.init(generationBackend: UnavailableMusicGenerationBackend(), lyricsWriter: GeminiLyricsWriter()) }
 
@@ -393,7 +438,8 @@ final class PlayerStore: NSObject, AVAudioPlayerDelegate {
         super.init()
         if ProcessInfo.processInfo.arguments.contains("--ui-testing") {
             for key in [defaultsKey, "vibe-player-song-ideas", "saved-vibes", "imported-audio-filename", "imported-audio-name",
-                        "vibe-player-saved-songs", "vibe-create-acoustics", "vibe-create-vocal-acoustics"] {
+                        "vibe-player-saved-songs", "vibe-create-acoustics", "vibe-create-vocal-acoustics",
+                        RenderingSteps.createPreferenceKey, RenderingSteps.radioPreferenceKey] {
                 UserDefaults.standard.removeObject(forKey: key)
             }
         }
@@ -512,20 +558,34 @@ final class PlayerStore: NSObject, AVAudioPlayerDelegate {
     func generateSong(
         idea: String = "", instrumental: Bool? = nil, preparedLyrics: String? = nil,
         createStyles: String? = nil, createRenderer: CreateRenderer = .metal, createLength: CreateLength = .automatic,
-        acoustics: CreateAcoustics = .reference, reference: MusicReference? = nil,
-        followStyleClosely: Bool = true, clearLeadVocals: Bool = false
+        acoustics: CreateAcoustics = .reference, renderingSteps: RenderingSteps = .createDefault, reference: MusicReference? = nil,
+        followStyleClosely: Bool = true, clearLeadVocals: Bool = false, planScore: Bool = true,
+        compactAttentionCache: Bool = false, scoreABC: String? = nil
     ) {
         if let createStyles {
             guard canGenerate else { errorMessage = MusicGenerationError.metalUnavailable.errorDescription; return }
+            guard scoreABC == nil || (canRenderMelody && reference == nil) else {
+                errorMessage = "Melody covers need the Mac YuE2 renderer and a single reference."
+                return
+            }
+            let useScore = planScore && scoreABC == nil && canPlanScore && reference == nil && acoustics == .reference
+                && instrumental != true && createRenderer == .metal
             queuedCreations.append(CreationJob(idea: idea, styles: createStyles, lyrics: preparedLyrics,
                                                instrumental: instrumental ?? false, renderer: createRenderer,
                                                length: createLength, acoustics: reference == nil ? acoustics : .reference,
+                                               renderingSteps: renderingSteps,
+                                               planScore: useScore,
+                                               compactAttentionCache: useScore && compactAttentionCache,
                                                followStyleClosely: followStyleClosely, clearLeadVocals: clearLeadVocals,
-                                               reference: reference))
+                                               reference: reference, scoreABC: scoreABC))
             if !isCreating {
                 cancelGeneration()
                 errorMessage = nil
+                #if os(macOS)
+                startNextCreation(autoplay: !webRadio.isRunning)
+                #else
                 startNextCreation(autoplay: true)
+                #endif
             }
             return
         }
@@ -559,7 +619,13 @@ final class PlayerStore: NSObject, AVAudioPlayerDelegate {
         activeCreation = job
         creationAutoplay = isPrompted && autoplay
         let voiceOverride: MusicGenerationRequest.Voice? = instrumental.map { $0 ? .instrumental : .vocals }
-        let reservedSeed = isPrompted ? nil : preparedRadioSeed
+        #if os(macOS)
+        let listenerSuggestion = !isPrompted && radioMode && idea.isEmpty ? webRadio.nextSuggestion(for: selected.id) : nil
+        let isListenerSong = listenerSuggestion != nil
+        #else
+        let isListenerSong = false
+        #endif
+        let reservedSeed = isPrompted || isListenerSong ? nil : preparedRadioSeed
         if !isPrompted { preparedRadioSeed = nil }
         let seed = reservedSeed ?? UInt64.random(in: 0...UInt64(Int64.max))
         let radioProfile = selected.musicProfile
@@ -567,16 +633,38 @@ final class PlayerStore: NSObject, AVAudioPlayerDelegate {
         func makeCreateRequest(for job: CreationJob, idea: String) -> MusicGenerationRequest {
             var request = MusicPromptBuilder().makeCreateRequest(idea: idea, styles: job.styles, instrumental: job.instrumental,
                                                                   seed: seed, length: job.length, followStyleClosely: job.followStyleClosely,
-                                                                  clearLeadVocals: job.clearLeadVocals)
+                                                                  clearLeadVocals: job.clearLeadVocals, renderingSteps: job.renderingSteps)
             request.createRenderer = job.length == .extended ? .metal : job.renderer
             request.createAcoustics = job.acoustics
+            request.planScore = job.planScore
+            request.compactAttentionCache = job.compactAttentionCache
+            if let scoreABC = job.scoreABC {
+                request.scoreABC = scoreABC
+                request.createRenderer = .metal
+                request.createAcoustics = .reference
+                request.minimumSemanticFrames = 200
+                request.maxSemanticFrames = 7_500
+            }
             return request
         }
         var request = job.map { makeCreateRequest(for: $0, idea: idea) }
             ?? MusicPromptBuilder().makeRadioPlaybackRequest(profile: radioProfile, seed: seed, idea: idea,
                                                             voiceOverride: voiceOverride, arrangement: arrangement)
+        #if os(macOS)
+        if let listenerSuggestion {
+            request.listenerTheme = listenerSuggestion.text
+            if request.voice != .vocals {
+                request.style += "; in the station's established style, evoke this imagery: “\(listenerSuggestion.text)”"
+            }
+        }
+        #endif
+        if !isPrompted, let radioRenderTiming {
+            request.synthesisSteps = radioRenderTiming.stepCount(preferred: RenderingSteps.radioPreferred,
+                                                               readySongs: radioReadyCount, voice: request.voice)
+        }
         if request.voice == .vocals, let preparedLyrics, !preparedLyrics.isEmpty { request = request.withLyrics(preparedLyrics) }
         let id = UUID()
+        let started = ContinuousClock.now
         let title = idea.split(whereSeparator: \.isWhitespace).prefix(6).joined(separator: " ")
         generationID = id
         isGenerating = true
@@ -601,8 +689,13 @@ final class PlayerStore: NSObject, AVAudioPlayerDelegate {
                 try await generationBackend.waitForIdle()
                 try Task.checkCancellation()
                 guard self?.generationID == id else { return }
+                #if os(macOS)
+                if !isPrompted, request.voice == .vocals, request.lyrics.isEmpty {
+                    generationBackend.prepareRendering(.reference, compactAttentionCache: false, preferFullPrecision: false)
+                }
+                #endif
                 var prepared = request
-                if let job {
+                if let job, job.scoreABC == nil {
                     self?.creationStatus = "Rewriting your idea…"
                     do {
                         if let rewritten = try await lyricsWriter.rewriteIdea(idea, styles: job.styles) {
@@ -626,17 +719,18 @@ final class PlayerStore: NSObject, AVAudioPlayerDelegate {
                 if prepared.voice == .vocals && prepared.lyrics.isEmpty {
                     self?.isWritingLyrics = true
                     self?.creationStatus = "Writing lyrics…"
-                    if !isPrompted { self?.radioRenderStage = .lyrics }
-                    do {
-                        prepared = prepared.withLyrics(try await lyricsWriter.writeLyrics(for: prepared))
-                    } catch is CancellationError {
-                        throw CancellationError()
-                    } catch where !isPrompted {
-                        prepared = MusicPromptBuilder().makeRadioPlaybackRequest(profile: radioProfile, seed: seed, idea: idea,
-                                                                                voiceOverride: .instrumental, arrangement: arrangement)
+                    if !isPrompted {
+                        self?.radioRenderStage = .lyrics
+                        let usage = try await generationBackend.promptUsage(for: prepared)
+                        prepared.radioUsesLongerLyrics = (usage?.limit ?? 0) >= 512
+                        try Task.checkCancellation()
+                        guard self?.generationID == id else { return }
                     }
+                    let lyrics = try await lyricsWriter.writeLyrics(for: prepared)
                     try Task.checkCancellation()
                     guard self?.generationID == id else { return }
+                    guard !lyrics.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw GeminiLyricsError.empty }
+                    prepared = prepared.withLyrics(lyrics)
                     self?.isWritingLyrics = false
                 }
                 if let reference = job?.reference {
@@ -669,7 +763,7 @@ final class PlayerStore: NSObject, AVAudioPlayerDelegate {
                 let onPreview: (@Sendable (MusicAudioPreview) -> Void)?
                 if let stream { onPreview = { preview in stream.continuation.yield(preview) } }
                 else { onPreview = nil }
-                if !isPrompted, reservedSeed == nil, request.voice == .instrumental, prepared.style == request.style,
+                if !isPrompted, !isListenerSong, reservedSeed == nil, request.voice == .instrumental, prepared.style == request.style,
                    generationBackend.canPrepareRadioPair,
                    self?.canComposeRadioPairAhead == true {
                     let nextSeed = Self.newRadioSeed(excluding: prepared.seed)
@@ -677,11 +771,28 @@ final class PlayerStore: NSObject, AVAudioPlayerDelegate {
                                                                             voiceOverride: voiceOverride, arrangement: arrangement + 1)
                     prepared.radioSuccessor = .init(seed: nextSeed, style: next.style)
                 }
+                let synthesisTiming = Mutex((start: Optional<ContinuousClock.Instant>.none,
+                                             end: Optional<ContinuousClock.Instant>.none))
+                let measureRadio = !isPrompted && reservedSeed == nil && prepared.radioSuccessor == nil
                 let output = try await generationBackend.generate(prepared, onPreview: onPreview) { [weak self] progress in
+                    if measureRadio {
+                        switch progress {
+                        case .synthesizing, .synthesis(0, _):
+                            synthesisTiming.withLock { if $0.start == nil { $0.start = .now } }
+                        case .waveform:
+                            synthesisTiming.withLock { if $0.end == nil { $0.end = .now } }
+                        default: break
+                        }
+                    }
                     Task { @MainActor in
                         guard let self, self.generationID == id else { return }
                         let fraction: Double
                         switch progress {
+                        case .planningMusic:
+                            fraction = 0.08
+                            guard fraction >= self.generationProgress else { return }
+                            if isPrompted { self.creationStatus = job?.scoreABC == nil ? "Planning melody and chords…" : "Composing from the reference melody…" }
+                            else { self.radioRenderStage = .composing(frames: 0) }
                         case .tokens(let count, let limit):
                             fraction = 0.08 + 0.52 * Double(count) / Double(max(limit, 1))
                             guard self.generationProgress < 0.60, fraction >= self.generationProgress else { return }
@@ -733,10 +844,22 @@ final class PlayerStore: NSObject, AVAudioPlayerDelegate {
                     let audioFile = try AVAudioFile(forReading: url)
                     guard audioFile.length > 0 else { throw MusicGenerationError.unavailable }
                     track.duration = Double(audioFile.length) / audioFile.fileFormat.sampleRate
+                    if measureRadio {
+                        let synthesis = synthesisTiming.withLock { timing -> Duration in
+                            guard let start = timing.start, let end = timing.end else { return .zero }
+                            return start.duration(to: end)
+                        }
+                        self.radioRenderTiming = RadioRenderTiming(voice: prepared.voice, steps: prepared.synthesisSteps,
+                                                                  elapsed: started.duration(to: .now), synthesis: synthesis,
+                                                                  audioDuration: track.duration)
+                    }
                     track.radioTitle = self.uniqueRadioTitle(suggestedTitle, seed: prepared.seed)
                     self.radioCanRetry = true
                     self.radioArrangement = (arrangement + 1) % MusicPromptBuilder.radioArrangements.count
                     self.preparedRadioSeed = output.radioSuccessorSeed
+                    #if os(macOS)
+                    if let listenerSuggestion { self.webRadio.finishSuggestion(listenerSuggestion.id) }
+                    #endif
                     let switchToUpdatedSound = self.prioritizeNextRadioSong && self.radioWantsPlayback
                     if self.prioritizeNextRadioSong {
                         if self.radioReadyCount >= self.radioQueueCapacity && !switchToUpdatedSound {
@@ -765,6 +888,9 @@ final class PlayerStore: NSObject, AVAudioPlayerDelegate {
             } catch {
                 if let resultURL { try? FileManager.default.removeItem(at: resultURL) }
                 guard let self, self.generationID == id else { return }
+                #if os(macOS)
+                if let listenerSuggestion { self.webRadio.finishSuggestion(listenerSuggestion.id) }
+                #endif
                 self.cancelPreview(generation: id)
                 self.finishGeneration(id)
                 if !isPrompted {
@@ -795,7 +921,15 @@ final class PlayerStore: NSObject, AVAudioPlayerDelegate {
             let target = max(12, fieldTokens - excess - 10 * (attempt + 1))
             guard let revised = try await writer.reviseForMusicModel(text, field: field, targetTokens: target),
                   !revised.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { break }
-            if reviseStyle { request.style = revised } else { request = request.withLyrics(revised) }
+            if reviseStyle {
+                request.style = revised
+            } else if request.purpose == .radio {
+                let sheet = RadioLyricSheet(longer: request.radioUsesLongerLyrics)
+                guard let lyrics = sheet.render(revised) else { continue }
+                request = request.withLyrics(lyrics)
+            } else {
+                request = request.withLyrics(revised)
+            }
             guard let updated = try await backend.promptUsage(for: request) else { return request }
             if updated.count <= updated.limit { return request }
             budget = updated
@@ -824,6 +958,7 @@ final class PlayerStore: NSObject, AVAudioPlayerDelegate {
 
     #if os(macOS)
     func prepareForTermination() async {
+        webRadio.stop()
         let pendingRender = generationTask
         queuedCreations.removeAll()
         pause()
@@ -958,6 +1093,14 @@ final class PlayerStore: NSObject, AVAudioPlayerDelegate {
     private func startRadioSong(at index: Int, crossfade: Bool) throws {
         try startTrack(radioPlaylist[index], savedID: nil, crossfade: crossfade)
         radioPlaybackIndex = index
+        #if os(macOS)
+        if webRadio.isRunning, index > 5 {
+            let expired = Array(radioPlaylist.prefix(index - 5))
+            radioPlaylist.removeFirst(expired.count)
+            radioPlaybackIndex = index - expired.count
+            for track in expired { discardTemporaryTrackIfUnused(track) }
+        }
+        #endif
         replaceWhenReady = false
         radioTrackEnded = false
     }
@@ -982,6 +1125,13 @@ final class PlayerStore: NSObject, AVAudioPlayerDelegate {
         let request = createStyles.map { MusicPromptBuilder().makeCreateRequest(idea: idea, styles: $0, instrumental: false, seed: 0) }
             ?? MusicPromptBuilder().makeRequest(profile: selected.musicProfile, seed: 0, idea: idea, voiceOverride: .vocals)
         return try await lyricsWriter.writeLyrics(for: request)
+    }
+
+    func createPromptUsage(idea: String, styles: String, lyrics: String, length: CreateLength,
+                           clearLeadVocals: Bool) async throws -> MusicPromptUsage? {
+        let request = MusicPromptBuilder().makeCreateRequest(idea: idea, styles: styles, instrumental: false,
+                                                              seed: 0, length: length, clearLeadVocals: clearLeadVocals)
+        return try await generationBackend.promptUsage(for: request.withLyrics(lyrics))
     }
     private func finishGeneration(_ id: UUID) {
         guard generationID == id else { return }
@@ -1246,7 +1396,7 @@ final class PlayerStore: NSObject, AVAudioPlayerDelegate {
         let previous = audio
         let oldTrack = currentTrack
         let fadeDuration = crossfade && previous?.isPlaying == true
-            ? min(2, max(0, (previous?.duration ?? 0) - (previous?.currentTime ?? 0)))
+            ? min(RadioRenderTiming.crossfadeSeconds, max(0, (previous?.duration ?? 0) - (previous?.currentTime ?? 0)))
             : 0
         fadeTask?.cancel(); fadingPlayer?.stop(); fadingPlayer = nil
         next.delegate = self; next.isMeteringEnabled = true; next.prepareToPlay()
@@ -1438,7 +1588,8 @@ final class PlayerStore: NSObject, AVAudioPlayerDelegate {
         }
         guard let audio, isPlaying else { return }
         elapsed = audio.currentTime
-        if radioMode, radioWantsPlayback, canPlayNextRadioSong, duration - elapsed <= 2.0 {
+        if radioMode, radioWantsPlayback, canPlayNextRadioSong,
+           duration - elapsed <= RadioRenderTiming.crossfadeSeconds {
             advanceRadio(crossfade: true)
             return
         }

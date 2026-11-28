@@ -23,12 +23,16 @@ struct Tokenizer {
     }
 
     func prompt(_ request: SongRequest) throws -> [[Int]] {
-        let instruction = "Generate music with codec tokens from the given conditions."
+        let instruction = request.scoreABC == nil
+            ? "Generate music with codec tokens from the given conditions."
+            : "Generate a melody-only ABC transcription without chord symbols, then generate music with codec tokens from the given conditions."
         let style = trimmingNewlines(request.style)
         let lyrics = trimmingNewlines(request.lyrics)
         let text = "\(instruction)\n[Tags]\n\(style)\n[Lyrics]\n\(lyrics)\n"
-        return [[151643] + (try encode(text)) + [151847, 151848, TensorSpec.musicStart],
-                [151643] + (try encode(instruction)) + [TensorSpec.musicStart]]
+        let scoreTokens = try request.scoreABC.map { try encode($0.precomposedStringWithCanonicalMapping) }
+        let scoreSlot = [151847] + (scoreTokens ?? []) + [151848]
+        return [[151643] + (try encode(text)) + scoreSlot + [TensorSpec.musicStart],
+                [151643] + (try encode(instruction)) + (scoreTokens == nil ? [] : scoreSlot) + [TensorSpec.musicStart]]
     }
 
     private func trimmingNewlines(_ value: String) -> String {

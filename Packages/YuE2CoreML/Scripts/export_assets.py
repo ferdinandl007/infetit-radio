@@ -122,7 +122,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("weights", type=Path)
     parser.add_argument("output", type=Path)
-    parser.add_argument("--prompt-capacity", type=int, default=264)
+    parser.add_argument("--prompt-capacity", type=int,
+                        help="Total tokens for instructions, sound description, and lyrics (macOS: 5024; iOS and visionOS: 512).")
     parser.add_argument("--decoder-frames", type=int, nargs="+", default=[1104, 3152, 5200])
     parser.add_argument("--acoustic-frames", type=int, nargs="+", default=[512, 4096, 5200])
     parser.add_argument("--platform", choices=("macosx", "iphoneos", "xros"), default="macosx")
@@ -159,13 +160,16 @@ def main():
         pending.write_text(json.dumps(manifest, indent=2) + "\n")
         pending.replace(manifest_path)
         return
-    p, batch = args.prompt_capacity, args.conditioning_batch
+    p = args.prompt_capacity
+    if p is None:
+        p = 5024 if args.platform == "macosx" else 512
+    batch = args.conditioning_batch
     ar, flow = args.decoder_frames, args.acoustic_frames
     if args.growable_cache and (batch != 2 or args.shared_weights):
         parser.error("--growable-cache uses shared weights and requires two conditioning branches.")
-    if not (32 <= p <= 1024 and ar == sorted(set(ar)) and flow == sorted(set(flow)) and
+    if not (32 <= p <= 5024 and ar == sorted(set(ar)) and flow == sorted(set(flow)) and
             all(128 <= f <= 5200 for f in ar + flow) and flow[-1] >= ar[-1]):
-        parser.error("Use ordered unique capacities, a prompt size of 32–1024, and an acoustic graph covering the decoder ceiling.")
+        parser.error("Use ordered unique capacities, a prompt size of 32–5024, and an acoustic graph covering the decoder ceiling.")
     weights, output = args.weights.resolve(), args.output.resolve()
     output.mkdir(parents=True, exist_ok=True)
     manifest = dict(version=3 if args.growable_cache else 2 if args.shared_weights else 1, promptCapacity=p, decoderFrames=ar, acousticFrames=flow)

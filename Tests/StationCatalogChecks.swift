@@ -23,7 +23,8 @@ import Foundation
         frenchStation.tags.append(tagOptions.first { $0.category == .language && $0.name == "French" }!)
         let savedFrench = try JSONDecoder().decode(Vibe.self, from: JSONEncoder().encode(frenchStation))
         let frenchRequest = MusicPromptBuilder().makeRequest(profile: savedFrench.musicProfile, seed: 42)
-        precondition(frenchRequest.voice == .vocals && frenchRequest.style.hasPrefix("vocals sung in French; "))
+        precondition(frenchRequest.voice == .vocals && frenchRequest.style.hasPrefix("vocals sung in French; ")
+                     && frenchRequest.style.contains("clear diction"))
         let instrumentalRequest = MusicPromptBuilder().makeRequest(profile: savedFrench.musicProfile, seed: 42,
                                                                     voiceOverride: .instrumental)
         precondition(instrumentalRequest.voice == .instrumental && !instrumentalRequest.style.contains("French"))

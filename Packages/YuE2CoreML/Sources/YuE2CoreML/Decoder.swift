@@ -217,7 +217,7 @@ struct Decoder {
                     return Float(data[row * stride[0] + index * stride[2]])
                 },
                 history: history, allowEnding: history.count >= stage.request.minimumFrames,
-                guidanceScale: stage.request.guidanceScale ?? 1.01, random: &random)
+                guidanceScale: stage.request.guidanceScale ?? (stage.request.scoreABC == nil ? 1.01 : 1), random: &random)
         }
     }
 

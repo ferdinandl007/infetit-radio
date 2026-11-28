@@ -93,6 +93,7 @@ final class AcousticStreamRenderer {
             #endif
             return try acoustic.solve(request.seed, count: count, graphFrames: AcousticWindow.capacity,
                                       used: window.compactPosition, conditioning: window.conditioning, model: model,
+                                      steps: request.acousticSteps,
                                       noiseOffset: plan.input.lowerBound, position: window.absolutePosition) { _ in }
         }
         acousticSeconds += acousticStart.duration(to: .now).seconds

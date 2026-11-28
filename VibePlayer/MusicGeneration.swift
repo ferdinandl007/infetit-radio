@@ -42,6 +42,42 @@ enum CreateAcoustics: String, Sendable {
     }
 }
 
+enum RenderingSteps: Int, CaseIterable, Sendable {
+    case eight = 8, sixteen = 16, thirtyTwo = 32
+
+    static let createPreferenceKey = "vibe-create-rendering-steps"
+    #if os(iOS)
+    static let createDefault: Self = .eight
+    #else
+    static let createDefault: Self = .thirtyTwo
+    #endif
+    static let radioPreferenceKey = "vibe-rendering-steps"
+    static var radioPreferred: Self {
+        Self(rawValue: UserDefaults.standard.integer(forKey: radioPreferenceKey)) ?? .sixteen
+    }
+}
+
+struct RadioRenderTiming {
+    static let crossfadeSeconds: TimeInterval = 2
+    static let targetRealtimeRate = 1.10
+    static let minimumSteps = RenderingSteps.eight.rawValue
+
+    let voice: MusicGenerationRequest.Voice
+    let steps: Int
+    let elapsed: Duration
+    let synthesis: Duration
+    let audioDuration: TimeInterval
+
+    func stepCount(preferred: RenderingSteps, readySongs: Int, voice: MusicGenerationRequest.Voice) -> Int {
+        guard readySongs >= 2, voice == self.voice, synthesis > .zero else { return Self.minimumSteps }
+        let budget = Duration.seconds(max(0, audioDuration - Self.crossfadeSeconds) / Self.targetRealtimeRate)
+        guard elapsed <= budget else { return Self.minimumSteps }
+        let current = min(steps, preferred.rawValue)
+        let extraStep = synthesis / Double(steps)
+        return current < preferred.rawValue && elapsed + extraStep <= budget ? current + 1 : current
+    }
+}
+
 /// Text and generation parameters accepted by the YuE2 renderer.
 struct MusicGenerationRequest: Equatable, Sendable {
     enum Voice: Sendable { case instrumental, vocals, unspecified }
@@ -57,14 +93,21 @@ struct MusicGenerationRequest: Equatable, Sendable {
     let purpose: Purpose
     let seed: UInt64
     /// YuE2 semantic frames at 25 Hz; a ceiling, not a guaranteed song duration.
-    let maxSemanticFrames: Int
-    let synthesisSteps: Int
+    var maxSemanticFrames: Int
+    var synthesisSteps: Int
     var createRenderer: CreateRenderer = .metal
     var minimumSemanticFrames = 200
     var createAcoustics: CreateAcoustics = .reference
+    var planScore = false
+    var scoreABC: String?
+    var compactAttentionCache = false
     var guidanceScale: Float? = nil
     var semanticPrefix: [Int] = []
     var radioSuccessor: RadioSuccessor?
+    var radioUsesLongerLyrics = false
+    var radioLyricTheme = ""
+    var listenerTheme: String? = nil
+    var radioLyricLanguage = "English"
 
     func withLyrics(_ lyrics: String) -> MusicGenerationRequest {
         var request = self
@@ -74,6 +117,8 @@ struct MusicGenerationRequest: Equatable, Sendable {
 }
 
 struct MusicPromptBuilder {
+    private static let clearVocals = "upfront lead vocal, clear diction, light vocal reverb"
+
     static let radioArrangements = [
         "syncopated lead phrases and a steady bass ostinato",
         "rolling arpeggios and a light offbeat groove",
@@ -100,7 +145,7 @@ struct MusicPromptBuilder {
     /// The Create screen starts with its own description instead of inheriting a radio station.
     func makeCreateRequest(idea: String, styles: String, instrumental: Bool, seed: UInt64,
                            length: CreateLength = .automatic, followStyleClosely: Bool = false,
-                           clearLeadVocals: Bool = false) -> MusicGenerationRequest {
+                           clearLeadVocals: Bool = false, renderingSteps: RenderingSteps = .createDefault) -> MusicGenerationRequest {
         let voice: MusicGenerationRequest.Voice = instrumental ? .instrumental : .vocals
         var parts = [instrumental ? "instrumental" : "vocal music"]
         let cleanStyles = styles.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -108,15 +153,16 @@ struct MusicPromptBuilder {
         if length == .fullSong { parts.append("full arrangement with a closing section") }
         if length == .extended { parts.append("extended arrangement with a closing section") }
         if !cleanStyles.isEmpty { parts.append("styles: " + cleanStyles) }
-        if clearLeadVocals && !instrumental { parts.append("upfront lead vocal, clear diction, light vocal reverb") }
+        if clearLeadVocals && !instrumental { parts.append(Self.clearVocals) }
         if !cleanIdea.isEmpty { parts.append("song idea: " + cleanIdea) }
         return MusicGenerationRequest(stationName: "Your song", style: parts.joined(separator: "; "), lyrics: "",
                                       voice: voice, purpose: .createdSong, seed: seed, maxSemanticFrames: length.maximumFrames,
-                                      synthesisSteps: 8, minimumSemanticFrames: length.minimumFrames,
+                                      synthesisSteps: renderingSteps.rawValue, minimumSemanticFrames: length.minimumFrames,
                                       guidanceScale: followStyleClosely ? 1.2 : nil)
     }
 
-    func makeRequest(profile: MusicProfile, seed: UInt64, maxSemanticFrames: Int = 5_000, idea: String = "", voiceOverride: MusicGenerationRequest.Voice? = nil) -> MusicGenerationRequest {
+    func makeRequest(profile: MusicProfile, seed: UInt64, maxSemanticFrames: Int = 5_000, idea: String = "",
+                     voiceOverride: MusicGenerationRequest.Voice? = nil, renderingSteps: RenderingSteps = .sixteen) -> MusicGenerationRequest {
         let active = profile.traits.filter { $0.intensity.isFinite && $0.intensity > 0 }
         func values(_ category: MusicProfile.Category) -> [MusicProfile.Trait] {
             active.filter { $0.category == category }.sorted {
@@ -145,7 +191,9 @@ struct MusicPromptBuilder {
         var parts: [String] = []
         switch voiceMode {
         case .instrumental: parts.append("instrumental")
-        case .vocals: parts.append(language.map { "vocals sung in \($0)" } ?? "vocal music")
+        case .vocals:
+            parts.append(language.map { "vocals sung in \($0)" } ?? "vocal music")
+            parts.append(Self.clearVocals)
         case .unspecified: break
         }
         let genres = values(.genre).map(description)
@@ -161,19 +209,25 @@ struct MusicPromptBuilder {
         }
         let cleanIdea = idea.trimmingCharacters(in: .whitespacesAndNewlines)
         if !cleanIdea.isEmpty { parts.append("song idea: " + cleanIdea) }
-        return MusicGenerationRequest(stationName: profile.name, style: parts.joined(separator: "; "), lyrics: "", voice: voiceMode, purpose: .radio, seed: seed, maxSemanticFrames: maxSemanticFrames, synthesisSteps: 8)
+        let themes = [profile.soundDescription?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "", cleanIdea]
+        return MusicGenerationRequest(stationName: profile.name, style: parts.joined(separator: "; "), lyrics: "",
+                                      voice: voiceMode, purpose: .radio, seed: seed, maxSemanticFrames: maxSemanticFrames,
+                                      synthesisSteps: renderingSteps.rawValue,
+                                      radioLyricTheme: themes.filter { !$0.isEmpty }.joined(separator: " "),
+                                      radioLyricLanguage: language ?? "English")
     }
 
     func makeRadioPlaybackRequest(profile: MusicProfile, seed: UInt64, idea: String,
-                                  voiceOverride: MusicGenerationRequest.Voice?, arrangement: Int) -> MusicGenerationRequest {
+                                  voiceOverride: MusicGenerationRequest.Voice?, arrangement: Int,
+                                  renderingSteps: RenderingSteps = .eight) -> MusicGenerationRequest {
         #if os(macOS)
         var request = makeRequest(profile: profile, seed: seed, maxSemanticFrames: CreateLength.fullSong.maximumFrames,
-                                  idea: idea, voiceOverride: voiceOverride)
+                                  idea: idea, voiceOverride: voiceOverride, renderingSteps: renderingSteps)
         request.minimumSemanticFrames = CreateLength.fullSong.minimumFrames
         request.style += "; full arrangement with a closing section"
         #else
         var request = makeRequest(profile: profile, seed: seed, maxSemanticFrames: 4_200,
-                                  idea: idea, voiceOverride: voiceOverride)
+                                  idea: idea, voiceOverride: voiceOverride, renderingSteps: renderingSteps)
         request.minimumSemanticFrames = 2_000
         #endif
         request.style += "; " + Self.radioArrangements[arrangement % Self.radioArrangements.count]
@@ -188,9 +242,10 @@ protocol MusicGenerationBackend {
     var isAvailable: Bool { get }
     var canUsePairedMetal: Bool { get }
     var canStreamAcoustics: Bool { get }
+    var canPlanScore: Bool { get }
     var canCreateExtended: Bool { get }
     var canPrepareRadioPair: Bool { get }
-    func prepareEarlyPlayback()
+    func prepareRendering(_ acoustics: CreateAcoustics, compactAttentionCache: Bool, preferFullPrecision: Bool)
     func waitForIdle() async throws
     func releaseResources() async
     func promptUsage(for request: MusicGenerationRequest) async throws -> MusicPromptUsage?
@@ -214,7 +269,7 @@ struct MusicReference: Equatable, Sendable {
     var prefix: [Int] { Array(tokens.prefix(openingFrames)) }
 
     static var canEncodeAudio: Bool {
-        #if os(macOS)
+        #if os(macOS) && !VIBEPLAYER_APP_STORE
         let files = referenceEncoder
         return FileManager.default.isExecutableFile(atPath: files.executable.path)
             && FileManager.default.isReadableFile(atPath: files.model.path)
@@ -233,7 +288,7 @@ struct MusicReference: Equatable, Sendable {
         if ["csv", "txt", "json"].contains(ext) {
             tokens = try readCodes(url)
         } else {
-            #if os(macOS)
+            #if os(macOS) && !VIBEPLAYER_APP_STORE
             tokens = try await encodeAudio(url)
             #else
             throw MusicGenerationError.referenceEncoderUnavailable
@@ -261,7 +316,7 @@ struct MusicReference: Equatable, Sendable {
         return tokens
     }
 
-    #if os(macOS)
+    #if os(macOS) && !VIBEPLAYER_APP_STORE
     private static var referenceEncoder: (executable: URL, model: URL, encoder: URL) {
         let root = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("YuE2NativeAssets/Reference")
@@ -379,15 +434,16 @@ struct MusicPromptUsage: Sendable {
 }
 
 enum MusicGenerationProgress: Sendable {
-    case tokens(Int, Int), synthesizing, synthesis(Int, Int), waveform
+    case planningMusic, tokens(Int, Int), synthesizing, synthesis(Int, Int), waveform
 }
 
 extension MusicGenerationBackend {
     var canPrepareRadioPair: Bool { false }
     var canUsePairedMetal: Bool { false }
     var canStreamAcoustics: Bool { false }
+    var canPlanScore: Bool { false }
     var canCreateExtended: Bool { false }
-    func prepareEarlyPlayback() {}
+    func prepareRendering(_ acoustics: CreateAcoustics, compactAttentionCache: Bool, preferFullPrecision: Bool) {}
     func waitForIdle() async throws {}
     func releaseResources() async {}
     func promptUsage(for request: MusicGenerationRequest) async throws -> MusicPromptUsage? { nil }

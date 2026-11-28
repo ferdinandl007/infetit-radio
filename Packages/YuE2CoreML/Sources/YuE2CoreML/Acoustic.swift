@@ -45,7 +45,8 @@ struct Acoustic {
             conditioning[name] = padded
         }
         let latents = try solve(request.seed, count: count, graphFrames: limit, used: used,
-                                conditioning: conditioning, model: assets.load("Acoustic\(limit)"), progress: progress)
+                                conditioning: conditioning, model: assets.load("Acoustic\(limit)"),
+                                steps: request.acousticSteps, progress: progress)
         let acousticSeconds = start.duration(to: .now).seconds
         let waveformStart = ContinuousClock.now
         progress(.waveform)
@@ -60,7 +61,7 @@ struct Acoustic {
     }
 
     func solve(_ seed: UInt64, count: Int, graphFrames: Int, used: Int,
-               conditioning: [String: MLMultiArray], model: MLModel, noiseOffset: Int = 0,
+               conditioning: [String: MLMultiArray], model: MLModel, steps: Int, noiseOffset: Int = 0,
                position: Int? = nil, progress: (SongProgress) -> Void) throws -> [Float] {
         let width = TensorSpec.latent
         let length = graphFrames + 2
@@ -114,8 +115,8 @@ struct Acoustic {
             x[i] = Float(radius * cos(angle))
             x[i+1] = Float(radius * sin(angle))
         }
-        let dt: Float = 1 / 8
-        for step in 0..<8 {
+        let dt = 1 / Float(steps)
+        for step in 0..<steps {
             let t = 1 - Float(step) * dt
             let first = try velocity(x, at: t)
             let midpoint = x.indices.map { x[$0] - first[$0] * (dt / 2) }
@@ -124,7 +125,7 @@ struct Acoustic {
             guard x.allSatisfy(\.isFinite) else {
                 throw YuE2Failure.inference("Nonfinite acoustic output at step \(step + 1).")
             }
-            progress(.synthesis(step: step + 1, total: 8))
+            progress(.synthesis(step: step + 1, total: steps))
         }
         return x
     }

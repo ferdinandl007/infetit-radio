@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#111512">
+  <meta name="description" content="An endless, live station from infetit radio. Tune in and give a future track an idea.">
+  <title>infetit radio</title>
+  <link rel="stylesheet" href="/radio.css">
+  <script type="module" src="/radio.js"></script>
+</head>
+<body>
+  <main class="shell">
+    <header class="masthead">
+      <div class="brand"><span class="mark" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></span> VIBE<span>RADIO</span></div>
+      <button class="share" id="share" type="button">Copy station link <span aria-hidden="true">↗</span></button>
+    </header>
+
+    <section class="broadcast" aria-labelledby="station">
+      <div class="broadcast-content">
+        <p class="status" id="broadcast-status" role="status"><span class="lamp"></span><span id="signal">Finding the station</span></p>
+        <h1 id="station">infetit radio</h1>
+        <p id="station-description" class="station-description">An endless station. New music as you listen.</p>
+        <button type="button" class="tune" id="tune" disabled>
+          <span class="play-icon" id="play-icon" aria-hidden="true">▶</span><span id="tune-label">Tune in</span>
+        </button>
+        <p id="listening-status" class="listening-status" role="status"></p>
+      </div>
+    </section>
+
+    <section class="airplay" aria-label="Now playing">
+      <div class="track">
+        <span class="label">Now playing</span>
+        <strong id="title">Waiting for a track</strong>
+      </div>
+      <div class="timeline">
+        <span id="elapsed" aria-hidden="true">0:00</span>
+        <progress id="progress" max="1" value="0" aria-label="Track progress"></progress>
+        <span id="duration" aria-hidden="true">0:00</span>
+      </div>
+      <button class="mute" id="mute" type="button" aria-pressed="false">Mute</button>
+      <audio id="audio" preload="metadata"></audio>
+    </section>
+
+    <section class="requests" aria-labelledby="request-title">
+      <div>
+        <h2 id="request-title">Give the station<br>an idea.</h2>
+        <p>Suggest a scene or a feeling. Ideas go in order and keep the station’s sound.</p>
+      </div>
+      <form id="idea-form">
+        <div class="field-label">
+          <label for="idea">Song idea</label>
+          <span id="length">0 / 160</span>
+        </div>
+        <textarea id="idea" name="idea" rows="3" maxlength="160" minlength="3" required placeholder="A last train home in the rain"></textarea>
+        <div class="form-actions">
+          <p id="idea-status" role="status"></p>
+          <button type="submit" id="submit" disabled>Send idea <span aria-hidden="true">↗</span></button>
+        </div>
+      </form>
+    </section>
+    <footer><span>infetit radio</span><span>Live generative radio</span></footer>
+  </main>
+</body>
+</html>

@@ -5,6 +5,9 @@ struct RadioView: View {
     @Binding var category: StationCategory?
     @Binding var query: String
     @FocusState private var searching: Bool
+    #if os(macOS)
+    @State private var showsWebRadio = false
+    #endif
 
     let openPlayer: () -> Void
     let openStation: (Vibe) -> Void
@@ -21,6 +24,9 @@ struct RadioView: View {
     }
 
     var body: some View {
+        #if os(macOS)
+        desktopRadio
+        #else
         ScrollView {
             VStack(alignment: .leading, spacing: 26) {
                 header
@@ -36,25 +42,98 @@ struct RadioView: View {
         .scrollDismissesKeyboard(.interactively)
         .background(radioBackground)
         .vibeHideNavigationBar()
+        #endif
     }
+
+    #if os(macOS)
+    private var desktopRadio: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 20) {
+                header
+                DesktopSearchField(placeholder: "Search stations", query: $query)
+                    .accessibilityIdentifier("station-search")
+                currentStation
+                VStack(alignment: .leading, spacing: 14) {
+                    Text("Explore stations")
+                        .font(.title2.weight(.medium))
+                        .accessibilityAddTraits(.isHeader)
+                    ScrollView(.horizontal) {
+                        HStack(spacing: 8) {
+                            filterButton(nil)
+                            ForEach(StationCategory.allCases) { filterButton($0) }
+                        }
+                    }
+                    .scrollIndicators(.hidden)
+                    .accessibilityIdentifier("station-categories")
+                    if stations.isEmpty {
+                        ContentUnavailableView.search(text: query)
+                            .frame(maxWidth: .infinity, minHeight: 160)
+                    } else {
+                        LazyVGrid(columns: [GridItem(.adaptive(minimum: 147, maximum: 240), spacing: 14, alignment: .top)],
+                                  alignment: .leading, spacing: 18) {
+                            ForEach(stations) { station in
+                                DesktopStationCard(station: station) { openStation(station) }
+                            }
+                        }
+                    }
+                }
+                importButton
+            }
+            .frame(maxWidth: 1230)
+            .padding(20)
+            .frame(maxWidth: .infinity)
+        }
+        .desktopPanel()
+        .clipShape(RoundedRectangle(cornerRadius: 13))
+        .padding(10)
+        .sheet(isPresented: $showsWebRadio) {
+            WebRadioPanel()
+        }
+    }
+    #endif
 
     private var header: some View {
         ViewThatFits(in: .horizontal) {
             HStack {
                 radioTitle
                 Spacer(minLength: 12)
-                newStationButton
+                headerActions
             }
             VStack(alignment: .leading, spacing: 12) {
                 radioTitle
-                newStationButton
+                headerActions
             }
+        }
+    }
+
+    private var headerActions: some View {
+        HStack(spacing: 8) {
+            #if os(macOS)
+            Button {
+                showsWebRadio = true
+            } label: {
+                Label(player.webRadio.isRunning ? "Broadcasting" : "Web Radio",
+                      systemImage: player.webRadio.isRunning ? "dot.radiowaves.left.and.right" : "globe")
+                    .font(.subheadline.weight(.semibold))
+                    .padding(.horizontal, 15)
+                    .frame(minHeight: 44)
+                    .desktopGlass(in: Capsule(), interactive: true)
+            }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("web-radio")
+            #endif
+            newStationButton
         }
     }
 
     private var radioTitle: some View {
         Text("Radio")
+            #if os(macOS)
+            .font(.system(size: 32, weight: .medium))
+            .tracking(-0.8)
+            #else
             .font(.largeTitle.weight(.bold))
+            #endif
             .accessibilityAddTraits(.isHeader)
     }
 
@@ -65,8 +144,12 @@ struct RadioView: View {
                 .padding(.horizontal, 15)
                 .padding(.vertical, 10)
                 .frame(minHeight: 44)
+                #if os(macOS)
+                .desktopGlass(in: Capsule(), interactive: true)
+                #else
                 .background(.white.opacity(0.09), in: Capsule())
                 .overlay { Capsule().strokeBorder(.white.opacity(0.10)) }
+                #endif
         }
         .buttonStyle(.plain)
         .fixedSize(horizontal: true, vertical: false)
@@ -75,9 +158,15 @@ struct RadioView: View {
     private var currentStation: some View {
         Button(action: openPlayer) {
             HStack(spacing: 15) {
+                #if os(macOS)
+                DesktopCoverArt(index: DesktopCoverArt.index(for: player.selected))
+                    .frame(width: 54, height: 54)
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                #else
                 StationCover(station: player.selected)
                     .frame(width: 72, height: 72)
                     .clipShape(RoundedRectangle(cornerRadius: 17))
+                #endif
 
                 VStack(alignment: .leading, spacing: 6) {
                     Text("Current station")
@@ -95,11 +184,11 @@ struct RadioView: View {
                 Image(systemName: "arrow.up.right")
                     .font(.subheadline.weight(.semibold))
                     .frame(width: 36, height: 36)
-                    .background(.white.opacity(0.12), in: Circle())
                     .accessibilityHidden(true)
             }
             .padding(14)
             .frame(maxWidth: .infinity, alignment: .leading)
+            #if !os(macOS)
             .background {
                 RoundedRectangle(cornerRadius: 24)
                     .fill(
@@ -108,6 +197,7 @@ struct RadioView: View {
                     )
             }
             .overlay { RoundedRectangle(cornerRadius: 24).strokeBorder(.white.opacity(0.08)) }
+            #endif
         }
         .buttonStyle(.plain)
         .accessibilityLabel("Open player for \(player.selected.name)")
@@ -175,6 +265,13 @@ struct RadioView: View {
 
     private func filterButton(_ option: StationCategory?) -> some View {
         let selected = category == option
+        #if os(macOS)
+        let height: CGFloat = 33
+        let accent = DesktopColors.accent
+        #else
+        let height: CGFloat = 44
+        let accent = radioAccent
+        #endif
         return Button {
             searching = false
             category = option
@@ -182,9 +279,9 @@ struct RadioView: View {
             Label(option?.rawValue ?? "All", systemImage: option?.symbol ?? "square.grid.2x2")
                 .font(.subheadline.weight(.semibold))
                 .padding(.horizontal, 13)
-                .frame(minHeight: 44)
+                .frame(minHeight: height)
                 .foregroundStyle(selected ? .black : .white)
-                .background(selected ? radioAccent : .white.opacity(0.07), in: Capsule())
+                .background(selected ? accent : .white.opacity(0.07), in: Capsule())
         }
         .buttonStyle(.plain)
         .accessibilityAddTraits(selected ? .isSelected : [])
@@ -261,6 +358,21 @@ struct NewStationView: View {
         _instrumental = State(initialValue: Self.isInstrumental(startingStation))
     }
 
+    private var stationBackground: AnyShapeStyle {
+        #if os(macOS)
+        AnyShapeStyle(LinearGradient(colors: [Color(red: 0.25, green: 0.14, blue: 0.34), Color(red: 0.12, green: 0.13, blue: 0.27)], startPoint: .topLeading, endPoint: .bottomTrailing))
+        #else
+        AnyShapeStyle(radioBackground)
+        #endif
+    }
+    private var stationAccent: Color {
+        #if os(macOS)
+        DesktopColors.accent
+        #else
+        radioAccent
+        #endif
+    }
+
     var body: some View {
         NavigationStack {
             ScrollView {
@@ -309,7 +421,7 @@ struct NewStationView: View {
             }
             .scrollDismissesKeyboard(.interactively)
             .safeAreaInset(edge: .bottom, spacing: 0) { createButton }
-            .background(radioBackground)
+            .background(stationBackground)
             .navigationTitle("New station")
             .vibeInlineTitle()
             .toolbar {
@@ -320,7 +432,7 @@ struct NewStationView: View {
             }
         }
         #if os(macOS)
-        .frame(width: 530, height: 620)
+        .frame(minWidth: 530, minHeight: 620)
         #endif
     }
 
@@ -366,7 +478,7 @@ struct NewStationView: View {
                 HStack(spacing: 10) {
                     Image(systemName: source.flatMap(StationCatalog.preset(for:))?.symbol ?? "waveform")
                         .frame(width: 23)
-                        .foregroundStyle(radioAccent)
+                        .foregroundStyle(stationAccent)
                     Text(source?.name ?? "From scratch")
                         .lineLimit(1)
                     Spacer()
@@ -397,7 +509,7 @@ struct NewStationView: View {
                 .frame(maxWidth: 520)
                 .padding(.vertical, 14)
                 .foregroundStyle(.black)
-                .background(radioAccent, in: RoundedRectangle(cornerRadius: 15))
+                .background(stationAccent, in: RoundedRectangle(cornerRadius: 15))
         }
         .buttonStyle(.plain)
         .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
@@ -405,7 +517,7 @@ struct NewStationView: View {
         .padding(.horizontal, 22)
         .padding(.vertical, 10)
         .frame(maxWidth: .infinity)
-        .background(radioBackground)
+        .background(stationBackground)
         .accessibilityIdentifier("create-station")
     }
 

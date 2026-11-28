@@ -7,6 +7,14 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		F17E00000000000000000011 /* AgentTools.swift in Sources */ = {isa = PBXBuildFile; fileRef = F17E00000000000000000012 /* AgentTools.swift */; };
+		F17E00000000000000000013 /* AgentSkills in Resources */ = {isa = PBXBuildFile; fileRef = F17E00000000000000000014 /* AgentSkills */; };
+        B00000000000000000000001 /* ModelDownload.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000000000000000000002 /* ModelDownload.swift */; };
+        B00000000000000000000003 /* ModelManifest.json in Resources */ = {isa = PBXBuildFile; fileRef = B00000000000000000000004 /* ModelManifest.json */; };
+		6A36D7B9284E414A88DF6223 /* RadioWeb in Resources */ = {isa = PBXBuildFile; fileRef = 6A36D7B9284E414A88DF6224 /* RadioWeb */; };
+		6A36D7B9284E414A88DF6221 /* WebRadio.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6A36D7B9284E414A88DF6222 /* WebRadio.swift */; };
+		D35700000000000000000001 /* DesktopWorkspace.swift in Sources */ = {isa = PBXBuildFile; fileRef = D35700000000000000000002 /* DesktopWorkspace.swift */; };
+        AEE300000000000000000001 /* LiquidSongwriting in Frameworks */ = {isa = PBXBuildFile; productRef = AEE300000000000000000003 /* LiquidSongwriting */; };
         AEE200000000000000000001 /* YuE2GenerationBackend.swift in Sources */ = {isa = PBXBuildFile; fileRef = AEE200000000000000000002 /* YuE2GenerationBackend.swift */; };
         AEE200000000000000000003 /* YuE2CoreML in Frameworks */ = {isa = PBXBuildFile; productRef = AEE200000000000000000004 /* YuE2CoreML */; };
         AEE200000000000000000006 /* YuE2Kit in Frameworks */ = {isa = PBXBuildFile; productRef = AEE200000000000000000007 /* YuE2Kit */; };
@@ -25,6 +33,9 @@
 		F17E00000000000000000005 /* StationCatalog.swift in Sources */ = {isa = PBXBuildFile; fileRef = F17E00000000000000000006 /* StationCatalog.swift */; };
 		F17E00000000000000000007 /* RadioView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F17E00000000000000000008 /* RadioView.swift */; };
 		F17E00000000000000000003 /* GeminiLyrics.swift in Sources */ = {isa = PBXBuildFile; fileRef = F17E00000000000000000004 /* GeminiLyrics.swift */; };
+		AEE300000000000000000010 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = AEE300000000000000000011 /* PrivacyInfo.xcprivacy */; };
+		AEE300000000000000000012 /* PRIVACY.md in Resources */ = {isa = PBXBuildFile; fileRef = AEE300000000000000000013 /* PRIVACY.md */; };
+		AEE300000000000000000014 /* LFM3-LICENSE.txt in Resources */ = {isa = PBXBuildFile; fileRef = AEE300000000000000000015 /* LFM3-LICENSE.txt */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -38,6 +49,13 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
+		F17E00000000000000000012 /* AgentTools.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentTools.swift; sourceTree = "<group>"; };
+		F17E00000000000000000014 /* AgentSkills */ = {isa = PBXFileReference; lastKnownFileType = folder; path = AgentSkills; sourceTree = "<group>"; };
+        B00000000000000000000002 /* ModelDownload.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelDownload.swift; sourceTree = "<group>"; };
+        B00000000000000000000004 /* ModelManifest.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = ModelManifest.json; sourceTree = "<group>"; };
+		6A36D7B9284E414A88DF6224 /* RadioWeb */ = {isa = PBXFileReference; lastKnownFileType = folder; path = RadioWeb; sourceTree = "<group>"; };
+		6A36D7B9284E414A88DF6222 /* WebRadio.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebRadio.swift; sourceTree = "<group>"; };
+		D35700000000000000000002 /* DesktopWorkspace.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DesktopWorkspace.swift; sourceTree = "<group>"; };
         AEE200000000000000000002 /* YuE2GenerationBackend.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = YuE2GenerationBackend.swift; sourceTree = "<group>"; };
 		1647953F77D646E7D82F0B6C /* Foundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Foundation.framework; path = System/Library/Frameworks/Foundation.framework; sourceTree = SDKROOT; };
 		1F3AA0CCD8BED13BE26FE62E /* PlayerView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PlayerView.swift; sourceTree = "<group>"; };
@@ -55,6 +73,9 @@
 		F17E00000000000000000006 /* StationCatalog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StationCatalog.swift; sourceTree = "<group>"; };
 		F17E00000000000000000008 /* RadioView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RadioView.swift; sourceTree = "<group>"; };
 		F17E00000000000000000004 /* GeminiLyrics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GeminiLyrics.swift; sourceTree = "<group>"; };
+		AEE300000000000000000011 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = "PrivacyInfo.xcprivacy"; sourceTree = "<group>"; };
+		AEE300000000000000000013 /* PRIVACY.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "../PRIVACY.md"; sourceTree = "<group>"; };
+		AEE300000000000000000015 /* LFM3-LICENSE.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = "LFM3-LICENSE.txt"; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -65,6 +86,7 @@
 				B856224336EF1D7CC24DFA4F /* Foundation.framework in Frameworks */,
                 AEE200000000000000000003 /* YuE2CoreML in Frameworks */,
                 AEE200000000000000000006 /* YuE2Kit in Frameworks */,
+                AEE300000000000000000001 /* LiquidSongwriting in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -100,6 +122,11 @@
 		78332FC3CFC7AA1EF4430918 /* VibePlayer */ = {
 			isa = PBXGroup;
 			children = (
+                B00000000000000000000002 /* ModelDownload.swift */,
+                B00000000000000000000004 /* ModelManifest.json */,
+				AEE300000000000000000011 /* PrivacyInfo.xcprivacy */,
+				AEE300000000000000000013 /* PRIVACY.md */,
+				AEE300000000000000000015 /* LFM3-LICENSE.txt */,
 				4E82CAECF6560176D3875E74 /* Editors.swift */,
 				F17E00000000000000000002 /* MusicGeneration.swift */,
                 AEE200000000000000000002 /* YuE2GenerationBackend.swift */,
@@ -107,12 +134,17 @@
 				EA4BBA69316023F5C8268CEB /* PlayerStore.swift */,
 				1F3AA0CCD8BED13BE26FE62E /* PlayerView.swift */,
 				52428ED6801AC2EA5C8CB85A /* RootView.swift */,
+				D35700000000000000000002 /* DesktopWorkspace.swift */,
 				F17E00000000000000000008 /* RadioView.swift */,
 				F17E00000000000000000006 /* StationCatalog.swift */,
 				E9C462A0D89E462501786D0A /* VibePlayerApp.swift */,
+				F17E00000000000000000012 /* AgentTools.swift */,
+				F17E00000000000000000014 /* AgentSkills */,
 				522A92E4813748CFCAD45B08 /* Resources */,
 				C0FE7819D74EA835C58EE19C /* CreateSongView.swift */,
 				4B866E742A671517FBE42F0C /* Assets.xcassets */,
+				6A36D7B9284E414A88DF6224 /* RadioWeb */,
+				6A36D7B9284E414A88DF6222 /* WebRadio.swift */,
 			);
 			name = VibePlayer;
 			path = VibePlayer;
@@ -182,13 +214,14 @@
 				74F3CEDA7F696AA8F2215240 /* Frameworks */,
 				CC75B6147C5A69A2BD96BEEE /* Resources */,
 				AEE200000000000000000009 /* Embed iOS Metal Runtime */,
+				AEE300000000000000000016 /* Stage App Store music model */,
 			);
 			buildRules = (
 			);
 			dependencies = (
 			);
 			name = VibePlayer;
-            packageProductDependencies = (AEE200000000000000000004 /* YuE2CoreML */, AEE200000000000000000007 /* YuE2Kit */,);
+            packageProductDependencies = (AEE200000000000000000004 /* YuE2CoreML */, AEE200000000000000000007 /* YuE2Kit */, AEE300000000000000000003 /* LiquidSongwriting */,);
 			productName = VibePlayer;
 			productReference = 995B67FBC5C8484CD611CFD4 /* infetit radio.app */;
 			productType = "com.apple.product-type.application";
@@ -211,7 +244,7 @@
 				Base,
 			);
 			mainGroup = FF14F25DB59A6098A60287DD;
-            packageReferences = (AEE200000000000000000005 /* YuE2CoreML */, AEE200000000000000000008 /* YuE2Kit */,);
+            packageReferences = (AEE200000000000000000005 /* YuE2CoreML */, AEE200000000000000000008 /* YuE2Kit */, AEE300000000000000000002 /* LiquidSongwriting */,);
 			minimizedProjectReferenceProxies = 0;
 			preferredProjectObjectVersion = 100;
 			productRefGroup = CEE92837695B15E2A21781B9 /* Products */;
@@ -236,8 +269,14 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+                B00000000000000000000003 /* ModelManifest.json in Resources */,
+				AEE300000000000000000010 /* PrivacyInfo.xcprivacy in Resources */,
+				AEE300000000000000000012 /* PRIVACY.md in Resources */,
+				AEE300000000000000000014 /* LFM3-LICENSE.txt in Resources */,
 				C62959087AC077DAC8B7E55A /* atmosphere.wav in Resources */,
 				2BD2699455544145CA84272F /* Assets.xcassets in Resources */,
+				6A36D7B9284E414A88DF6223 /* RadioWeb in Resources */,
+				F17E00000000000000000013 /* AgentSkills in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -255,6 +294,18 @@
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
 			shellScript = "/bin/sh \"$SRCROOT/Packages/YuE2Kit/Scripts/embed-ios-runtime.sh\"";
+		};
+		AEE300000000000000000016 /* Stage App Store music model */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = ();
+			inputPaths = ();
+			name = "Stage App Store music model";
+			outputPaths = ();
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "/bin/sh \"$SRCROOT/VibePlayer/Scripts/stage-store-music-model.sh\"";
 		};
 /* End PBXShellScriptBuildPhase section */
 
@@ -278,9 +329,13 @@
 				4D0DC81F15A5EF284AB8F5A2 /* PlayerStore.swift in Sources */,
 				A593230B1F8B32236F7E8CAD /* PlayerView.swift in Sources */,
 				788113D023EAAA76DF7DB126 /* RootView.swift in Sources */,
+				D35700000000000000000001 /* DesktopWorkspace.swift in Sources */,
 				F17E00000000000000000007 /* RadioView.swift in Sources */,
 				F17E00000000000000000005 /* StationCatalog.swift in Sources */,
 				069989F5C00EE14019654F13 /* VibePlayerApp.swift in Sources */,
+				F17E00000000000000000011 /* AgentTools.swift in Sources */,
+                B00000000000000000000001 /* ModelDownload.swift in Sources */,
+				6A36D7B9284E414A88DF6221 /* WebRadio.swift in Sources */,
 				AE9665BB2F96868814AF4D98 /* CreateSongView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -297,10 +352,12 @@
 /* End PBXTargetDependency section */
 
 /* Begin XCLocalSwiftPackageReference section */
+        AEE300000000000000000002 /* LiquidSongwriting */ = {isa = XCLocalSwiftPackageReference; relativePath = Packages/LiquidSongwriting; };
         AEE200000000000000000005 /* XCLocalSwiftPackageReference */ = {isa = XCLocalSwiftPackageReference; relativePath = Packages/YuE2CoreML; };
         AEE200000000000000000008 /* YuE2Kit */ = {isa = XCLocalSwiftPackageReference; relativePath = Packages/YuE2Kit; };
 /* End XCLocalSwiftPackageReference section */
 /* Begin XCSwiftPackageProductDependency section */
+        AEE300000000000000000003 /* LiquidSongwriting */ = {isa = XCSwiftPackageProductDependency; package = AEE300000000000000000002 /* LiquidSongwriting */; productName = LiquidSongwriting; };
         AEE200000000000000000004 /* YuE2CoreML */ = {isa = XCSwiftPackageProductDependency; package = AEE200000000000000000005 /* XCLocalSwiftPackageReference */; productName = YuE2CoreML; };
         AEE200000000000000000007 /* YuE2Kit */ = {isa = XCSwiftPackageProductDependency; package = AEE200000000000000000008 /* YuE2Kit */; productName = YuE2Kit; };
 /* End XCSwiftPackageProductDependency section */
@@ -386,6 +443,10 @@
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
 				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks";
+				CURRENT_PROJECT_VERSION = 1;
+				MARKETING_VERSION = 1.0;
+				"INFOPLIST_KEY_LSApplicationCategoryType[sdk=macosx*]" = "public.app-category.music";
+				VIBEPLAYER_MAC_STORE_ENTITLEMENTS = VibePlayer/AppStore.entitlements;
 				PRODUCT_BUNDLE_IDENTIFIER = com.vibeplayer.app;
 				PRODUCT_NAME = "infetit radio";
 				SDKROOT = auto;
@@ -486,6 +547,10 @@
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
 				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks";
+				CURRENT_PROJECT_VERSION = 1;
+				MARKETING_VERSION = 1.0;
+				"INFOPLIST_KEY_LSApplicationCategoryType[sdk=macosx*]" = "public.app-category.music";
+				VIBEPLAYER_MAC_STORE_ENTITLEMENTS = VibePlayer/AppStore.entitlements;
 				PRODUCT_BUNDLE_IDENTIFIER = com.vibeplayer.app;
 				PRODUCT_NAME = "infetit radio";
 				SDKROOT = auto;

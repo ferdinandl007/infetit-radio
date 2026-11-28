@@ -1,0 +1,78 @@
+diff --git a/external/ggml/src/ggml-metal/ggml-metal-ops.cpp b/external/ggml/src/ggml-metal/ggml-metal-ops.cpp
+--- a/external/ggml/src/ggml-metal/ggml-metal-ops.cpp
++++ b/external/ggml/src/ggml-metal/ggml-metal-ops.cpp
+@@ -13,6 +13,7 @@
+ #include <limits>
+ #include <cstring>
+ #include <cmath>
++#include <cstdlib>
+ 
+ static ggml_metal_buffer_id ggml_metal_get_buffer_id(const ggml_tensor * t) {
+     if (!t) {
+@@ -650,6 +651,42 @@
+ 
+     const int32_t dim = ((const int32_t *) op->op_params)[0];
+ 
++    // Vectorized concat follows llama.cpp #32824. A single batch joined
++    // on the sequence axis consists of two flat spans for contiguous F16.
++    static const bool vector_concat = [] {
++        const char * value = std::getenv("VIBE_YUE2_METAL_VECTOR_CONCAT");
++        return value && std::strcmp(value, "1") == 0;
++    }();
++    if (vector_concat && dim == 2 && ne3 == 1 && op->type == GGML_TYPE_F16 &&
++        ggml_is_contiguous(op->src[0]) && ggml_is_contiguous(op->src[1]) && ggml_is_contiguous(op)) {
++        constexpr size_t vector_bytes = 16;
++        const auto left_size = ggml_nbytes(op->src[0]);
++        const auto total_size = ggml_nbytes(op);
++        const auto left = ggml_metal_get_buffer_id(op->src[0]);
++        const auto right = ggml_metal_get_buffer_id(op->src[1]);
++        const auto output = ggml_metal_get_buffer_id(op);
++        if (total_size / vector_bytes <= UINT32_MAX &&
++            (left_size | total_size | left.offs | right.offs | output.offs) % vector_bytes == 0) {
++            const char * name = "kernel_concat_f16_vector";
++            auto pipeline = ggml_metal_library_get_pipeline(lib, name);
++            if (!pipeline.pipeline) {
++                pipeline = ggml_metal_library_compile_pipeline(lib, name, name, nullptr);
++            }
++            if (pipeline.pipeline) {
++                uint32_t counts[] = {uint32_t(left_size / vector_bytes), uint32_t(total_size / vector_bytes)};
++                constexpr int threads = 256;
++                ggml_metal_encoder_set_pipeline(enc, pipeline);
++                ggml_metal_encoder_set_bytes(enc, counts, sizeof(counts), 0);
++                ggml_metal_encoder_set_buffer(enc, left, 1);
++                ggml_metal_encoder_set_buffer(enc, right, 2);
++                ggml_metal_encoder_set_buffer(enc, output, 3);
++                ggml_metal_encoder_dispatch_threadgroups(enc, (uint64_t(counts[1]) + threads - 1) / threads,
++                                                         1, 1, threads, 1, 1);
++                return 1;
++            }
++        }
++    }
++
+     ggml_metal_kargs_concat args = {
+         /*.ne00 =*/ ne00,
+         /*.ne01 =*/ ne01,
+diff --git a/external/ggml/src/ggml-metal/ggml-metal.metal b/external/ggml/src/ggml-metal/ggml-metal.metal
+--- a/external/ggml/src/ggml-metal/ggml-metal.metal
++++ b/external/ggml/src/ggml-metal/ggml-metal.metal
+@@ -8635,6 +8635,20 @@
+ template [[host_name("kernel_cpy_q5_1_f16")]] kernel cpy_q_f_t kernel_cpy_q_f32<half4x4, block_q5_1, 2, dequantize_q5_1>;
+ template [[host_name("kernel_cpy_q8_0_f16")]] kernel cpy_q_f_t kernel_cpy_q_f32<half4x4, block_q8_0, 2, dequantize_q8_0>;
+ 
++// Copy aligned FP16 buffers as raw bits, including any FP16 payloads.
++kernel void kernel_concat_f16_vector(
++        constant uint2 & counts,
++        device const uint4 * left,
++        device const uint4 * right,
++        device uint4 * output,
++        uint index [[thread_position_in_grid]]) {
++    if (index < counts.x) {
++        output[index] = left[index];
++    } else if (index < counts.y) {
++        output[index] = right[index - counts.x];
++    }
++}
++
+ kernel void kernel_concat(
+     constant ggml_metal_kargs_concat & args,
+     device  const char * src0,

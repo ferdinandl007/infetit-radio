@@ -12,7 +12,34 @@ final class VibePlayerUITests: XCTestCase {
         let shot = XCTAttachment(screenshot: app.screenshot())
         shot.name = name; shot.lifetime = .keepAlways; add(shot)
     }
+    func testMusicModelDownloadOnSimulator() throws {
+        app.terminate()
+        app.launchArguments = ["--ui-testing", "--show-model-setup"]
+        app.launch()
+        let download = app.buttons["Download music model"]
+        XCTAssertTrue(download.waitForExistence(timeout: 30))
+        capture("Music model setup")
+        download.tap()
+        XCTAssertTrue(app.progressIndicators["music-model-progress"].waitForExistence(timeout: 30))
+        XCTAssertTrue(app.buttons["Pause download"].waitForExistence(timeout: 30))
+        XCTAssertTrue(app.staticTexts["music-model-speed"].waitForExistence(timeout: 180), "Transfer speed should appear while a file is downloading")
+        capture("Music model download progress")
+        app.buttons["Pause download"].tap()
+        let resume = app.buttons["Continue download"]
+        XCTAssertTrue(resume.waitForExistence(timeout: 60))
+        resume.tap()
+        let pause = app.buttons["Pause download"]
+        XCTAssertTrue(pause.waitForExistence(timeout: 30))
+        let finished = expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: pause)
+        wait(for: [finished], timeout: 1800)
+        XCTAssertFalse(app.buttons["Continue download"].exists, "The download must finish, rather than stop on an error")
+        XCTAssertTrue(app.buttons["open-current-station"].waitForExistence(timeout: 30))
+        capture("Radio after model installation")
+    }
     func testRadioPlayerAndSoundEditors() throws {
+        app.terminate()
+        app.launchArguments = ["--ui-testing", "--fixture-renderer"]
+        app.launch()
         XCTAssertTrue(app.staticTexts["Radio"].waitForExistence(timeout: 20))
         capture("Radio")
         app.buttons["station-Joyful Pop"].tap()
@@ -20,14 +47,15 @@ final class VibePlayerUITests: XCTestCase {
         capture("Player")
         let language = app.buttons["radio-language"]
         language.tap()
-        XCTAssertTrue(app.navigationBars["Shape your sound"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.navigationBars["Shape your sound"].waitForExistence(timeout: 15))
         let french = app.buttons["French"]
         XCTAssertTrue(french.waitForExistence(timeout: 5))
         french.tap()
         app.buttons["Done"].tap()
+        XCTAssertTrue(app.navigationBars["Shape your sound"].waitForNonExistence(timeout: 10))
         XCTAssertEqual(language.value as? String, "French")
         app.buttons["Add"].tap()
-        XCTAssertTrue(app.navigationBars["Shape your sound"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.navigationBars["Shape your sound"].waitForExistence(timeout: 15))
         capture("Sound picker")
         app.buttons["Instruments"].tap()
         XCTAssertTrue(app.buttons["Piano"].waitForExistence(timeout: 5))
@@ -114,8 +142,9 @@ final class VibePlayerUITests: XCTestCase {
         app.tabBars.buttons["Create"].tap()
         XCTAssertTrue(app.textViews["song-prompt"].waitForExistence(timeout: 10))
         capture("Create")
+        let ideaTitle = "Moonlight " + String(UUID().uuidString.prefix(6))
         let prompt = app.textViews["song-prompt"]
-        prompt.tap(); prompt.typeText("Moonlight drive")
+        prompt.tap(); prompt.typeText(ideaTitle)
         app.buttons["edit-styles"].tap()
         XCTAssertTrue(app.textViews["styles-editor"].waitForExistence(timeout: 5))
         capture("Styles editor")
@@ -131,10 +160,10 @@ final class VibePlayerUITests: XCTestCase {
         app.buttons["Save idea"].tap()
         XCTAssertTrue(app.staticTexts["idea-saved"].waitForExistence(timeout: 5))
         app.tabBars.buttons["Library"].tap()
-        XCTAssertTrue(app.staticTexts["Moonlight drive"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts[ideaTitle].waitForExistence(timeout: 5))
         capture("Library")
-        app.staticTexts["Moonlight drive"].tap()
-        XCTAssertTrue(app.staticTexts["Moonlight drive"].waitForExistence(timeout: 5))
+        app.staticTexts[ideaTitle].firstMatch.tap()
+        XCTAssertTrue(app.staticTexts[ideaTitle].waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["mellow"].exists)
         XCTAssertTrue(app.staticTexts["Under the moonlight"].exists)
         capture("Song idea")
@@ -145,6 +174,9 @@ final class VibePlayerUITests: XCTestCase {
         XCTAssertTrue(options.waitForExistence(timeout: 10))
         options.tap()
         app.buttons["Songwriting settings"].tap()
+        let cloud = app.switches["Send songwriting text to Gemini"]
+        XCTAssertTrue(cloud.waitForExistence(timeout: 5))
+        if cloud.value as? String == "0" { cloud.tap() }
         XCTAssertTrue(app.secureTextFields["gemini-api-key"].waitForExistence(timeout: 5))
         XCTAssertFalse(app.alerts["Songwriting"].exists)
         app.buttons["Done"].tap()
@@ -304,7 +336,7 @@ final class VibePlayerUITests: XCTestCase {
         app.buttons["Done"].tap()
         app.buttons["create-song"].tap()
         app.buttons["open-generation-progress"].tap()
-        XCTAssertTrue(app.staticTexts["Whole-song synthesis · step 1 of 8"].waitForExistence(timeout: 4))
+        XCTAssertTrue(app.staticTexts["Whole-song synthesis · step 1 of 16"].waitForExistence(timeout: 4))
         XCTAssertTrue(app.staticTexts["Playing while rendering"].waitForExistence(timeout: 8))
         app.buttons["Close generation progress"].tap()
         app.tabBars.buttons["Library"].tap()

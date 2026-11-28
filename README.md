@@ -17,7 +17,7 @@ infetit radio is an experimental native app for exploring what a music player fe
 
 ## What you can do
 
-- **Make your own radio.** Pick a station and adjust its genre, mood, instruments, voice, and tempo. Radio prepares songs in the background and crossfades to the next one when it is ready.
+- **Make your own radio.** Pick a station and adjust its genre, mood, instruments, voice, and tempo. Radio prepares songs in the background and crossfades to the next one when it is ready. It starts at eight synthesis steps and adds one step at a time when the queue and measured render times leave enough playback headroom.
 - **Create songs from an idea.** Describe the sound, provide lyrics or ask a writing model to help, and follow generation progress in the Create view.
 - **Listen as audio becomes available.** Early playback builds a buffer while generation continues; High quality uses full acoustic context. Availability depends on your installed assets and device.
 - **Keep the songs you love.** Created songs are saved to your library. Like a Radio track to keep it; unsaved Radio renders are temporary.
@@ -76,9 +76,9 @@ The app looks for an indexed version 3 bundle named `YuE2MetalAssets` in its app
 
 1. Obtain the [audio.cpp YuE2 GGUF checkpoint](https://huggingface.co/audio-cpp/Yue2-3B-GGUF), including the required weights and sidecars.
 2. Follow the [YuE2CoreML export and Metal indexing instructions](Packages/YuE2CoreML/README.md#metal-decoder-preview).
-3. Install the resulting `YuE2MetalAssets` directory in the app bundle or its Application Support directory. Keep the complete bundle together.
+3. Install the resulting `YuE2MetalAssets` directory in the app bundle or its Application Support directory. Keep the complete bundle together. New exports default to 5,024 input tokens on macOS and 512 on iOS and visionOS. The budget includes the description, formatting, and lyrics. Older bundles keep their compiled capacity.
 
-On Apple silicon Macs, the `YuE2NativeAssets` directory in Application Support enables the audio.cpp Metal runtime. High Quality and Radio prefer the optimized `libaudiocpp-pcm-fast.dylib` and fall back to `libaudiocpp-pcm.dylib` when needed. Both use eight synthesis steps and full-song context. The indexed model still uses Core ML for prompt prefill. See [YuE2Kit's runtime and asset instructions](Packages/YuE2Kit/README.md#runtime-and-weights).
+On Apple silicon Macs, the `YuE2NativeAssets` directory in Application Support enables the audio.cpp Metal runtime. High Quality and Radio prefer the optimized `libaudiocpp-pcm-fast.dylib` and fall back to `libaudiocpp-pcm.dylib` when needed. Both use full-song context. Create uses its selected step count and Radio adjusts steps to its playback budget. The indexed model still uses Core ML for prompt prefill. See [YuE2Kit's runtime and asset instructions](Packages/YuE2Kit/README.md#runtime-and-weights).
 
 On physical iPhones and iPads, builds with the embedded `YuE2Audio.framework` and the native weights also use audio.cpp Metal for High Quality and Radio. Composition finishes before the native acoustic session loads. The app uses the indexed Core ML acoustic and waveform graphs when the native runtime or weights are unavailable. [Build and provision the iOS runtime](Packages/YuE2Kit/README.md#iphone-and-ipad)
 
@@ -88,9 +88,17 @@ Model assets can require several gigabytes. The separately distributed YuE2 weig
 
 ### Radio
 
-A station supplies the style, voice, and tempo. Each song gets its own title, seed, and arrangement cues. The writing model can draft original lyrics for vocal tracks. Radio starts playing as soon as its first song is ready and keeps rendering until it has ten songs queued. On Mac, songs run from 2:00 to 3:28 with eight full-context acoustic steps. **Prepare songs** can fill the queue while playback is paused.
+A station supplies the style, voice, and tempo. Each song gets its own title, seed, and arrangement cues. For vocal tracks, Radio writes and checks a lyric sheet with verses, a chorus, and an outro. It repeats the chorus verbatim in the sheet and asks the renderer for a clear lead vocal. Bundles with room for at least 512 input tokens allow a third verse and chorus. Radio starts playing as soon as its first song is ready and keeps rendering until it has ten songs queued. On Mac, songs run from 2:00 to 3:28. Radio starts with eight full-context acoustic steps and raises quality when measured playback headroom allows it. **Prepare songs** can fill the queue while playback is paused.
 
 Sound changes apply to the next render. Ready songs keep playing until the updated one is available, then Radio crossfades into it. **Previous song** replays the previous track and returns to the interrupted track afterward. Mac playback and rendering can continue with the display locked. On iPhone and iPad, the ready queue plays while locked and generation resumes when the app is active again.
+
+### Broadcast Radio on the web
+
+On Mac, open **Radio → Web Radio → Start web player**. The browser joins the station already playing on your Mac. Keep infetit radio running to continue the broadcast.
+
+For public access, connect the Mac to Tailscale, then use **Copy Funnel command**. Run it in Terminal and share the HTTPS address it prints. Keep the command running while you broadcast. [Set up Tailscale Funnel](https://tailscale.com/docs/features/tailscale-funnel)
+
+Listeners can suggest a scene or feeling. Ideas are applied in order as new songs are generated, behind songs already prepared. The selected station sets the style, tempo, and voice. The host can remove waiting ideas or turn submissions off from the Web Radio panel.
 
 ### Create
 
@@ -100,13 +108,23 @@ In the **Metal** menu, **Follow style closely** is on by default and sets YuE2's
 
 **Early playback** generates overlapping sections and starts after building a buffer. If generation falls behind, playback fades out and resumes from the same position when enough audio is ready. **High quality** is the default on Mac, iPhone, and iPad. It synthesizes with full acoustic context and starts when the waveform decoder has built a buffer. Mac Create defaults to **Full song**, allowing an ending between 2:00 and 3:28. Compatible models also offer **Extended** for 3:30 to 4:16. Create remembers the rendering choice separately for vocal songs and instrumentals.
 
+**Full-song rendering steps** in Create defaults to 32, matching the official YuE2 step count. Select 8 or 16 for a faster render. Early playback and Radio have separate step counts to keep audio coming sooner.
+
+**Plan melody and chords** is on by default for new High quality vocal songs when the native YuE2 runtime is available. YuE2 generates an ABC score, then uses it to compose the vocal and instrumental performance. Turn off planning to start composing directly.
+
 Use **Remix in Create** from a generated song’s Library menu to keep its original audio up to a chosen point and blend into a new ending. On Mac, the optional reference encoder can also open older Library songs and local recordings. It listens to up to the first 60 seconds and extracts musical context locally. The **Reference** button also accepts a file of zero-based YuE2 codes. [Reference encoder and weight files](https://hangry-labs.github.io/yue2/docs/MODELS.html)
+
+In the Mac development build, **Create → Melody** opens a recording or an ABC score. Install the optional transcriber with `python3 Scripts/install_melody_tools.py` (requires CMake and Xcode's Metal toolchain). SheetSage2 turns up to five minutes of audio into editable ABC notation. Check the notes, choose **Use Melody**, and describe the new arrangement. Add the words under **Lyrics** for a vocal cover. The transcription contains notes, not the original words. **Save ABC** exports the score so you can revise and reuse it. YuE2 uses the score as a guide, so listen for any changes to the melody.
+
+Agents can run the same workflow locally with [the Mac music CLI](Docs/agent-music.md). It can transcribe a recording, create a new song from lyrics and style, or render an edited score as another take.
 
 An explicit artist request such as “I want a Taylor Swift song” opens released tracks in Apple Music. Choose **Create an original song instead** to use the prompt for generation.
 
 ### Writing and privacy
 
-Music generation runs locally using the installed model. For songwriting, you can supply your own lyrics or configure a Gemini API key in Create. The key is stored in the device Keychain; when configured, writing requests are normally sent to Gemini over HTTPS. If there is no key or the connection fails, the app uses Apple's on-device Foundation Model when available.
+Music generation runs locally. In **Create → Songwriting settings**, you can download Liquid AI’s LFM3 1.7B model from Hugging Face for on-device writing. The download is about 1 GB. The app uses Apple’s on-device writer when available and can use the downloaded model when it isn’t. Gemini is optional and requires your consent and an API key stored in the device Keychain. [Privacy policy](PRIVACY.md)
+
+The local writer uses Liquid AI’s original [LFM3 1.7B MLX checkpoint](https://huggingface.co/LiquidAI/LFM3-1.7B-MLX-4bit) under the [LFM Open License v1.0](VibePlayer/LFM3-LICENSE.txt). The app downloads the model data for a pinned revision and verifies the files before loading them.
 
 ## Project structure
 
@@ -118,7 +136,7 @@ Music generation runs locally using the installed model. For songwriting, you ca
 To run the standalone music prompt checks on a Mac:
 
 ```sh
-xcrun swiftc -parse-as-library VibePlayer/MusicGeneration.swift Tests/MusicPromptBuilderChecks.swift -o /tmp/vibe-prompt-checks
+xcrun swiftc -enable-bare-slash-regex -parse-as-library VibePlayer/MusicGeneration.swift Tests/MusicPromptBuilderChecks.swift -o /tmp/vibe-prompt-checks
 /tmp/vibe-prompt-checks
 ```
 

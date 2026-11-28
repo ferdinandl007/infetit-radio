@@ -25,7 +25,8 @@ private final class GeminiStub: URLProtocol {
         guard
               let body, let contents = String(data: body, encoding: .utf8),
               (contents.contains("Polish the following lyrics") && contents.contains("original line")) ||
-                contents.contains("Reply with one short word") || contents.contains("Invent one original song title") else {
+                contents.contains("Reply with one short word") || contents.contains("Invent one original song title") ||
+                contents.contains("Write original lyrics") || contents.contains("Plan a short song") else {
             client?.urlProtocol(self, didFailWithError: URLError(.badServerResponse)); return
         }
         let response = HTTPURLResponse(url: url, statusCode: key == "bad-key" ? 403 : 200, httpVersion: nil, headerFields: nil)!
@@ -75,6 +76,57 @@ private final class GeminiStub: URLProtocol {
         let request = MusicPromptBuilder().makeCreateRequest(idea: "the moon", styles: "folk", instrumental: false, seed: 1)
         let localLyrics = try await missingKey.writeLyrics(for: request)
         precondition(localLyrics == "[Verse]\nA local melody")
+
+        let radioDraft = """
+        [Verse 1]
+        Un matin de mai
+        Le vent court dehors
+        Je cherche la clé
+        Du vieux coffre en or
+
+        [Chorus]
+        Viens marcher près de moi
+        Le chemin sent le bois
+        Un oiseau chante là
+        Et le jour nous verra
+
+        [Verse 2]
+        Le coffre est ouvert
+        Une lettre est là
+        Je reconnais hier
+        Le tracé de tes pas
+
+        [Outro]
+        Demain je t’écrirai
+        Et tu me répondras
+        """
+        let radioWriter = GeminiLyricsWriter(readKey: { nil }, localCompletion: { prompt, _ in
+            if prompt.contains("Plan a short song") {
+                return "A morning walk leads to a letter in an old chest."
+            }
+            precondition(prompt.contains("Language: French"))
+            precondition(prompt.contains("[Verse 1], [Chorus], [Verse 2], [Outro]") && prompt.contains("natural pronunciation"))
+            precondition(prompt.contains("A morning walk leads to a letter in an old chest."))
+            return prompt.contains("previous draft was incomplete") ? radioDraft : "An incomplete draft"
+        })
+        let french = MusicProfile(name: "French Radio", traits: [.init(name: "French", category: .language, intensity: 1)], tempo: 90)
+        let radioRequest = MusicPromptBuilder().makeRadioPlaybackRequest(profile: french, seed: 1, idea: "", voiceOverride: nil, arrangement: 0)
+        let radioLyrics = try await radioWriter.writeLyrics(for: radioRequest)
+        precondition(radioLyrics.components(separatedBy: "Viens marcher près de moi").count == 3)
+        precondition(radioLyrics.hasSuffix("Et tu me répondras"))
+        precondition(RadioLyricSheet(longer: false).render(radioLyrics) == radioLyrics)
+        precondition(RadioLyricSheet(longer: true).render(radioLyrics) == nil)
+
+        let rejectedRadioWriter = GeminiLyricsWriter(session: URLSession(configuration: configuration), readKey: { "bad-key" },
+                                                      localCompletion: { _, _ in radioLyrics })
+        let recoveredRadioLyrics = try await rejectedRadioWriter.writeLyrics(for: radioRequest)
+        precondition(recoveredRadioLyrics == radioLyrics)
+        let unavailableRadioWriter = GeminiLyricsWriter(session: URLSession(configuration: configuration), readKey: { "bad-key" },
+                                                         localCompletion: { _, _ in nil })
+        do {
+            _ = try await unavailableRadioWriter.writeLyrics(for: radioRequest)
+            preconditionFailure("Radio must surface the provider error if local songwriting is unavailable")
+        } catch GeminiLyricsError.rejected(403) { }
 
         let localTitleWriter = GeminiLyricsWriter(readKey: { nil }, localCompletion: { prompt, _ in
             precondition(prompt.contains("Invent one original song title") && prompt.contains("folk"))

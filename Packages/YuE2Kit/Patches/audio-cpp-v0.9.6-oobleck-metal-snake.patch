@@ -1,0 +1,194 @@
+diff --git a/external/ggml/include/ggml.h b/external/ggml/include/ggml.h
+index 067526e..6109ab1 100644
+--- a/external/ggml/include/ggml.h
++++ b/external/ggml/include/ggml.h
+@@ -1623,6 +1623,13 @@ extern "C" {
+             struct ggml_context * ctx,
+             struct ggml_tensor  * a,
+             struct ggml_tensor  * alpha);
++
++    // SnakeBeta on [frames, channels]: alpha and denominator are F32 channel vectors.
++    GGML_API struct ggml_tensor * ggml_snake_beta_1d(
++            struct ggml_context * ctx,
++            struct ggml_tensor  * a,
++            struct ggml_tensor  * alpha,
++            struct ggml_tensor  * denominator);
+ 
+     GGML_API struct ggml_tensor * ggml_mul_mat_pack4(
+             struct ggml_context * ctx,
+diff --git a/external/ggml/src/ggml-cpu/ggml-cpu.c b/external/ggml/src/ggml-cpu/ggml-cpu.c
+index d48d2af..8915786 100644
+--- a/external/ggml/src/ggml-cpu/ggml-cpu.c
++++ b/external/ggml/src/ggml-cpu/ggml-cpu.c
+@@ -1781,6 +1781,23 @@ static void ggml_compute_forward_snake_1d(
+     GGML_ASSERT(ggml_is_contiguous(src1));
+     GGML_ASSERT(ggml_is_contiguous(dst));
+     GGML_ASSERT(src0->ne[2] == 1 && src0->ne[3] == 1);
++    // SnakeBeta uses a separate denominator and channels on the slow axis.
++    const struct ggml_tensor * denominator = dst->src[2];
++    if (denominator != NULL) {
++        GGML_ASSERT(denominator->type == GGML_TYPE_F32 && ggml_is_contiguous(denominator));
++        const float * x = (const float *) src0->data;
++        const float * a = (const float *) src1->data;
++        const float * d = (const float *) denominator->data;
++        float * y = (float *) dst->data;
++        for (int64_t c = 0; c < src0->ne[1]; ++c) {
++            for (int64_t t = 0; t < src0->ne[0]; ++t) {
++                const int64_t i = c * src0->ne[0] + t;
++                const float s = sinf(x[i] * a[c]);
++                y[i] = x[i] + (s * s) / d[c];
++            }
++        }
++        return;
++    }
+     GGML_ASSERT(src1->ne[0] == src0->ne[0] && src1->ne[1] == 1);
+ 
+     const int64_t nc = src0->ne[0];
+diff --git a/external/ggml/src/ggml-metal/ggml-metal-device.cpp b/external/ggml/src/ggml-metal/ggml-metal-device.cpp
+index b989e82..49ccd02 100644
+--- a/external/ggml/src/ggml-metal/ggml-metal-device.cpp
++++ b/external/ggml/src/ggml-metal/ggml-metal-device.cpp
+@@ -362,7 +362,7 @@ ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_snake_1d(ggml_me
+     char base[256];
+     char name[256];
+ 
+-    snprintf(base, 256, "kernel_snake_1d_f32");
++    snprintf(base, 256, "%s", op->src[2] ? "kernel_snake_beta_1d_f32" : "kernel_snake_1d_f32");
+     snprintf(name, 256, "%s", base);
+ 
+     ggml_metal_pipeline_with_params res = ggml_metal_library_get_pipeline(lib, name);
+diff --git a/external/ggml/src/ggml-metal/ggml-metal-device.m b/external/ggml/src/ggml-metal/ggml-metal-device.m
+index 0ea02e1..7040b8f 100644
+--- a/external/ggml/src/ggml-metal/ggml-metal-device.m
++++ b/external/ggml/src/ggml-metal/ggml-metal-device.m
+@@ -1285,8 +1285,8 @@ bool ggml_metal_device_supports_op(ggml_metal_device_t dev, const struct ggml_te
+             }
+             return has_simdgroup_reduction && op->src[0]->type != GGML_TYPE_NVFP4;
+         case GGML_OP_SNAKE_1D:
+-            // fused snake activation: elementwise F32, nothing exotic required
+             return op->src[0]->type == GGML_TYPE_F32 && op->src[1]->type == GGML_TYPE_F32 &&
++                   (!op->src[2] || op->src[2]->type == GGML_TYPE_F32) &&
+                    op->type == GGML_TYPE_F32;
+         case GGML_OP_MUL_MAT_ACC:
+             // accumulate-in-place matmul: mirrors the has_simdgroup_mm branch of mul_mat
+diff --git a/external/ggml/src/ggml-metal/ggml-metal-ops.cpp b/external/ggml/src/ggml-metal/ggml-metal-ops.cpp
+index 06a97af..f65c620 100644
+--- a/external/ggml/src/ggml-metal/ggml-metal-ops.cpp
++++ b/external/ggml/src/ggml-metal/ggml-metal-ops.cpp
+@@ -991,7 +991,12 @@ int ggml_metal_op_snake_1d(ggml_metal_op_t ctx, int idx) {
+     ggml_metal_encoder_set_bytes   (enc, &args, sizeof(args), 0);
+     ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op->src[0]), 1);
+     ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op->src[1]), 2);
+-    ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op), 3);
++    if (op->src[2]) {
++        ggml_metal_encoder_set_buffer(enc, ggml_metal_get_buffer_id(op->src[2]), 3);
++        ggml_metal_encoder_set_buffer(enc, ggml_metal_get_buffer_id(op), 4);
++    } else {
++        ggml_metal_encoder_set_buffer(enc, ggml_metal_get_buffer_id(op), 3);
++    }
+ 
+     const int64_t n = int64_t(ne00)*ne01;
+ 
+diff --git a/external/ggml/src/ggml-metal/ggml-metal.metal b/external/ggml/src/ggml-metal/ggml-metal.metal
+index 3d90ec0..4f1b24b 100644
+--- a/external/ggml/src/ggml-metal/ggml-metal.metal
++++ b/external/ggml/src/ggml-metal/ggml-metal.metal
+@@ -1254,6 +1254,29 @@ kernel void kernel_snake_1d_f32(
+     y[0] = xv + s2/av;
+ }
+ 
++// SnakeBeta preserves Oobleck's FP32 division and channel parameters.
++kernel void kernel_snake_beta_1d_f32(
++        constant ggml_metal_kargs_snake_1d & args [[buffer(0)]],
++        device const float * input [[buffer(1)]],
++        device const float * alpha [[buffer(2)]],
++        device const float * denominator [[buffer(3)]],
++        device float * output [[buffer(4)]],
++        uint i [[thread_position_in_grid]]) {
++    #pragma clang fp contract(off)
++    const uint frames = args.ne00;
++    const uint channel = i / frames;
++    if (channel >= uint(args.ne01)) {
++        return;
++    }
++
++    const float x = input[i];
++    const float ax = x * alpha[channel];
++    const float sine = sin(ax);
++    const float squared = sine * sine;
++    const float periodic = squared / denominator[channel];
++    output[i] = x + periodic;
++}
++
+ typedef decltype(kernel_unary_impl<float, float, float>) kernel_unary_t;
+ 
+ template [[host_name("kernel_unary_f32_f32")]]   kernel kernel_unary_t kernel_unary_impl<float,  float,  float>;
+diff --git a/external/ggml/src/ggml.c b/external/ggml/src/ggml.c
+index 8d20357..48a6056 100644
+--- a/external/ggml/src/ggml.c
++++ b/external/ggml/src/ggml.c
+@@ -3628,6 +3628,25 @@ struct ggml_tensor * ggml_snake_1d(
+     return result;
+ }
+ 
++struct ggml_tensor * ggml_snake_beta_1d(
++        struct ggml_context * ctx,
++        struct ggml_tensor  * a,
++        struct ggml_tensor  * alpha,
++        struct ggml_tensor  * denominator) {
++    GGML_ASSERT(a->type == GGML_TYPE_F32 && ggml_is_contiguous(a));
++    GGML_ASSERT(a->ne[2] == 1 && a->ne[3] == 1);
++    GGML_ASSERT(alpha->type == GGML_TYPE_F32 && ggml_is_contiguous(alpha));
++    GGML_ASSERT(denominator->type == GGML_TYPE_F32 && ggml_is_contiguous(denominator));
++    GGML_ASSERT(ggml_nelements(alpha) == a->ne[1] && ggml_nelements(denominator) == a->ne[1]);
++
++    struct ggml_tensor * result = ggml_dup_tensor(ctx, a);
++    result->op     = GGML_OP_SNAKE_1D;
++    result->src[0] = a;
++    result->src[1] = alpha;
++    result->src[2] = denominator;
++    return result;
++}
++
+ struct ggml_tensor * ggml_mul_mat_pack4(
+         struct ggml_context * ctx,
+         struct ggml_tensor  * a,
+diff --git a/src/framework/codecs/oobleck_audio_vae_runtime.cpp b/src/framework/codecs/oobleck_audio_vae_runtime.cpp
+index 5fb5031..5abbc05 100644
+--- a/src/framework/codecs/oobleck_audio_vae_runtime.cpp
++++ b/src/framework/codecs/oobleck_audio_vae_runtime.cpp
+@@ -11,10 +11,12 @@
+ #include <chrono>
+ #include <cmath>
+ #include <cstddef>
++#include <cstdlib>
+ #include <memory>
+ #include <numeric>
+ #include <stdexcept>
+ #include <string>
++#include <string_view>
+ #include <utility>
+ 
+ namespace engine::codecs {
+@@ -331,6 +333,21 @@ core::TensorValue snake_beta(
+     const modules::SnakeBeta1dWeights & weights,
+     int64_t channels,
+     bool logscale) {
++    const char * fused = std::getenv("AUDIOCPP_OOBLECK_METAL_SNAKE");
++    if (ctx.backend_type == core::BackendType::Metal && (!fused || std::string_view(fused) != "0") &&
++        input.type == GGML_TYPE_F32 && input.tensor->ne[1] == channels &&
++        input.tensor->ne[2] == 1 && input.tensor->ne[3] == 1) {
++        const auto contiguous = core::ensure_backend_addressable_layout(ctx, input);
++        auto * alpha = weights.alpha.tensor;
++        auto * beta = weights.beta.tensor;
++        if (logscale) {
++            alpha = ggml_exp(ctx.ggml, alpha);
++            beta = ggml_exp(ctx.ggml, beta);
++        }
++        auto * denominator = ggml_scale_bias(ctx.ggml, beta, 1.0F, 1.0e-9F);
++        return core::wrap_tensor(
++            ggml_snake_beta_1d(ctx.ggml, contiguous.tensor, alpha, denominator), input.shape, GGML_TYPE_F32);
++    }
+     return modules::SnakeBeta1dModule({channels, logscale}).build(ctx, input, weights);
+ }
+ 

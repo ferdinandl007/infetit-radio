@@ -2,6 +2,7 @@ import CoreML
 import Darwin
 import Foundation
 import Metal
+import Synchronization
 
 private struct MetalWeightIndex: Decodable {
     struct Projection: Decodable {
@@ -40,9 +41,28 @@ private struct MetalWeightIndex: Decodable {
     }
 }
 
-private struct DecoderKernels {
+private struct DecoderKernels: Sendable {
+    private struct Key: Hashable {
+        let deviceID: UInt64
+        let pairedLayout: Bool
+        let songCount: Int
+    }
+
+    private static let cache = Mutex([Key: DecoderKernels]())
+
+    static func load(_ device: any MTLDevice, paired: Bool, songCount: Int) throws -> DecoderKernels {
+        let key = Key(deviceID: device.registryID, pairedLayout: paired, songCount: songCount)
+        return try cache.withLock { kernels in
+            if let prepared = kernels[key] { return prepared }
+            let prepared = try DecoderKernels(device, paired: paired, songCount: songCount)
+            kernels[key] = prepared
+            return prepared
+        }
+    }
+
     let project: any MTLComputePipelineState
     let projectFour: (any MTLComputePipelineState)?
+    let projectGateUp: (any MTLComputePipelineState)?
     let projectionRows: Int
     let rms: any MTLComputePipelineState
     let rotary: any MTLComputePipelineState
@@ -51,7 +71,7 @@ private struct DecoderKernels {
     let residual: any MTLComputePipelineState
     let gate: any MTLComputePipelineState
 
-    init(_ device: any MTLDevice, paired: Bool, songCount: Int) throws {
+    private init(_ device: any MTLDevice, paired: Bool, songCount: Int) throws {
         #if SWIFT_PACKAGE
         let bundle = Bundle.module
         #else
@@ -85,6 +105,8 @@ private struct DecoderKernels {
         }
         project = try pipeline(paired ? "project_q4_paired" : "project_q4", minimumThreads: projectionRows * 32)
         projectFour = songCount == 2 ? try pipeline("project_q4_four", minimumThreads: projectionRows * 32) : nil
+        let enableGateUp = !paired && ProcessInfo.processInfo.environment["VIBEPLAYER_METAL_GATE_UP"] != "0"
+        projectGateUp = enableGateUp ? try? pipeline("project_q4_gate_up", minimumThreads: projectionRows * 32) : nil
         rms = try pipeline("rms_hidden")
         rotary = try pipeline("rotate_and_append")
         attend = try pipeline("attend_tiles")
@@ -141,7 +163,7 @@ final class MetalDecoder {
         index = try readRecord(MetalWeightIndex.self, at: assets.url("metal-decoder.json"))
         weights = try Self.mapWeights(weightFile ?? assets.url("Autoregressive.mlmodelc/weights/weight.bin"),
                                       index: index, device: device)
-        kernels = try DecoderKernels(device, paired: paired, songCount: songCount)
+        kernels = try DecoderKernels.load(device, paired: paired, songCount: songCount)
 
         func buffer(_ count: Int, options: MTLResourceOptions = .storageModePrivate) throws -> any MTLBuffer {
             guard count <= device.maxBufferLength,
@@ -332,10 +354,26 @@ final class MetalDecoder {
             combine(kernels.residual, first: hidden, second: residual, width: 2048)
 
             rms(n + 3)
-            project(p + 4, from: normalized, to: gate, rows: 6144)
-            project(p + 5, from: normalized, to: up, rows: 6144)
-            barrier()
-            combine(kernels.gate, first: gate, second: up, width: 6144)
+            if activeSongs == 1, let projectGateUp = kernels.projectGateUp {
+                encoder.setComputePipelineState(projectGateUp)
+                let gateWeights = index.projections[p + 4]
+                let upWeights = index.projections[p + 5]
+                encoder.setBuffer(weights, offset: gateWeights.packed, index: 0)
+                encoder.setBuffer(weights, offset: gateWeights.scale, index: 1)
+                encoder.setBuffer(weights, offset: upWeights.packed, index: 2)
+                encoder.setBuffer(weights, offset: upWeights.scale, index: 3)
+                encoder.setBuffer(normalized, offset: firstBranch * 2048 * 2, index: 4)
+                encoder.setBuffer(gate, offset: firstBranch * 6144 * 2, index: 5)
+                var shape = SIMD2<UInt32>(2048, 6144)
+                encoder.setBytes(&shape, length: MemoryLayout.size(ofValue: shape), index: 6)
+                groups(6144 / kernels.projectionRows, threads: kernels.projectionRows * 32)
+                barrier()
+            } else {
+                project(p + 4, from: normalized, to: gate, rows: 6144)
+                project(p + 5, from: normalized, to: up, rows: 6144)
+                barrier()
+                combine(kernels.gate, first: gate, second: up, width: 6144)
+            }
             project(p + 6, from: gate, to: residual, columns: 6144)
             barrier()
             combine(kernels.residual, first: hidden, second: residual, width: 2048)

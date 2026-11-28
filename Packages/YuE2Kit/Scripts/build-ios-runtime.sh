@@ -10,7 +10,11 @@ trap 'rm -rf -- "$work"' EXIT
 git clone --quiet --depth 1 --branch "$revision" -- "$source" "$work/audio.cpp"
 git -C "$work/audio.cpp" apply \
     "$package_dir/Patches/audio-cpp-v0.9.6-waveform.patch" \
-    "$package_dir/Patches/audio-cpp-v0.9.6-wide-attention.patch"
+    "$package_dir/Patches/audio-cpp-v0.9.6-wide-attention.patch" \
+    "$package_dir/Patches/audio-cpp-v0.9.6-oobleck-metal-snake.patch" \
+    "$package_dir/Patches/audio-cpp-v0.9.6-metal-vector-concat.patch" \
+    "$package_dir/Patches/audio-cpp-v0.9.6-acoustic-kernels.patch" \
+    "$package_dir/Patches/audio-cpp-v0.9.6-metal-allocation-failure.patch"
 
 # The vendored SentencePiece uses this ios-cmake helper for its CLI targets.
 cat > "$work/ios.cmake" <<'EOF'

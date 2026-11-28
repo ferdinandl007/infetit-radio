@@ -1,0 +1,232 @@
+{
+  "coreml": {
+    "ios": {
+      "Acoustic4200.mlmodelc/analytics/coremldata.bin": {
+        "sha256": "8c9482187100c0c4b3438ce2515b02a34af5acbbece6e7d5d6305425e689d517",
+        "size": 243
+      },
+      "Acoustic4200.mlmodelc/coremldata.bin": {
+        "sha256": "0a0ff9ce355b4bebaa790b9c4671d22721706016f774aad508ea09c68a2b02fc",
+        "size": 307
+      },
+      "Acoustic4200.mlmodelc/metadata.json": {
+        "sha256": "c398915d40415936d4e1ac49c511f6d4823778cf1edb3f0bc6c6459a19258506",
+        "size": 3680
+      },
+      "Acoustic4200.mlmodelc/model.mil": {
+        "sha256": "33f96f04b52788b8d818c66afd36138bf7d147cfd36aeabde6df01953e86c26b",
+        "size": 523035
+      },
+      "Acoustic4200.mlmodelc/weights/weight.bin": {
+        "sha256": "3af0f2103d7cc63fbbaafb9a4f6f4768600cd634ad9fbfdeb4bdaa854663a7bd",
+        "size": 819831424
+      },
+      "Acoustic512.mlmodelc/analytics/coremldata.bin": {
+        "sha256": "dc9092a9b61445c876096afb93327d7ad6bb86b7cc60e8ff19f725774994c23a",
+        "size": 243
+      },
+      "Acoustic512.mlmodelc/coremldata.bin": {
+        "sha256": "9772d7b2e0615d4f0b23d733f9e0b55d04c82c525428bff41b761ec937ba4964",
+        "size": 307
+      },
+      "Acoustic512.mlmodelc/metadata.json": {
+        "sha256": "8329ba8bf202a9c1aee8ab40ad0e558fb6b2fe341fc2f2c7dbcba4ffd5323ec3",
+        "size": 3671
+      },
+      "Acoustic512.mlmodelc/model.mil": {
+        "sha256": "95f9044d278804fe706ea7c92e8d0aae7f3cb515a28d29e901ca06149285c344",
+        "size": 521135
+      },
+      "Acoustic512.mlmodelc/weights/weight.bin": {
+        "sha256": "9dbd21beb8b4fb5d35e22c13b7838bf7e596fb95a7067ef71ef4937b417b23f0",
+        "size": 804725376
+      },
+      "Autoregressive.mlmodelc/analytics/coremldata.bin": {
+        "sha256": "6fc94ed86132fb4f7da5b061a459d538743540d6e9cae6a30092cd395536472e",
+        "size": 243
+      },
+      "Autoregressive.mlmodelc/coremldata.bin": {
+        "sha256": "fe7000544dd05d7da92c6476543000d7afc846d70447a4c29e9166ae44b2563e",
+        "size": 719
+      },
+      "Autoregressive.mlmodelc/metadata.json": {
+        "sha256": "8d0b1a78077c4514db7a1d792e91a04147187cf8da9298ea295e9036656c7b00",
+        "size": 12122
+      },
+      "Autoregressive.mlmodelc/model.mil": {
+        "sha256": "3deab907b30275f467404c1d694c44798e5dfbf8165d9c0371dd247f88417782",
+        "size": 985506
+      },
+      "Autoregressive.mlmodelc/weights/weight.bin": {
+        "sha256": "12c24802d2a96c69b1c982a10af9d5e42d732ca04ca83db7a8897647412c28d3",
+        "size": 830837890
+      },
+      "Waveform.mlmodelc/analytics/coremldata.bin": {
+        "sha256": "251afc07609a45739993ef63875e549efc710b689cda5ec8bea1a1695284ca35",
+        "size": 243
+      },
+      "Waveform.mlmodelc/coremldata.bin": {
+        "sha256": "06ed74e743b453ec7f1f511ca6ffff3ed38f51588cd28767bd41514f8baac1e0",
+        "size": 156
+      },
+      "Waveform.mlmodelc/metadata.json": {
+        "sha256": "1eee1c80de599e24e87f1380d36bddd508091fea4c9e8401192ccb44a1798f4b",
+        "size": 1491
+      },
+      "Waveform.mlmodelc/model.mil": {
+        "sha256": "fbc282abca7b4023a9d21fc1534708b00d9138620c0e964c30b42efc31684f94",
+        "size": 105123
+      },
+      "Waveform.mlmodelc/weights/weight.bin": {
+        "sha256": "37ed50c14ef811fd2a02bdde2b766e55563680b1c05efd605cba01aaffd402cc",
+        "size": 132723328
+      },
+      "build-settings.json": {
+        "sha256": "35154c379274e9987660ffa3df5847c7b4a9f5894cb6dbc16218885e25ad3d8b",
+        "size": 178
+      },
+      "embeddings.f16": {
+        "sha256": "4d7b9e9c90ba8c9af341cb96ef4ac7edda9ffc62f87d630b2d1f2f42609172d8",
+        "size": 756547584
+      },
+      "manifest.json": {
+        "sha256": "5b8d17bce8e4f9e012cc11dd0775ae1483ccc8d5826eee5a1a5624fc1845af11",
+        "size": 144
+      },
+      "metal-decoder.json": {
+        "sha256": "f82e860f371b01b61c247bc3c168887dd25654806778ba5cd79b233acca11094",
+        "size": 14499
+      },
+      "tokenizer.tiktoken": {
+        "sha256": "b2b1b8dfb5cc5f024bafc373121c6aba3f66f9a5a0269e243470a1de16a33186",
+        "size": 2561218
+      }
+    },
+    "macos": {
+      "Acoustic4096.mlmodelc/analytics/coremldata.bin": {
+        "sha256": "7b0264f37eb0b4644737d72dcbb9cc11bc4299fb68765a9492fe805789806397",
+        "size": 243
+      },
+      "Acoustic4096.mlmodelc/coremldata.bin": {
+        "sha256": "e4e12a014f29283f295baef14cc766d1ca01cafd14b9eb59dc1a629a7aa54e1a",
+        "size": 307
+      },
+      "Acoustic4096.mlmodelc/metadata.json": {
+        "sha256": "e347a527b71d94565208758a3ae4dc7c2ec44b4df07983bb99de58fa0590e9a9",
+        "size": 3682
+      },
+      "Acoustic4096.mlmodelc/model.mil": {
+        "sha256": "bde212bab1ac24c1320ee06885328c0d983d9f06043609d4e4bd3d09032f4cf9",
+        "size": 523092
+      },
+      "Acoustic4096.mlmodelc/weights/weight.bin": {
+        "sha256": "c32990fa3825cc0d524968ee1c53f6642d661f1a4c750a7ee02b4435362ef67a",
+        "size": 819405440
+      },
+      "Acoustic512.mlmodelc/analytics/coremldata.bin": {
+        "sha256": "8e700b080606deb1b4e670c3c61857146694e58a0fc4a2fa7569d2a2b6cb28e0",
+        "size": 243
+      },
+      "Acoustic512.mlmodelc/coremldata.bin": {
+        "sha256": "64ac0f149662251a95e7bac5dcc15b1de4c4d4e0343cf4f8c529d2bcb9e1e2cd",
+        "size": 307
+      },
+      "Acoustic512.mlmodelc/metadata.json": {
+        "sha256": "e9c8dece3f3895f36b0a83e93bb1aa9fedc02ad4d8a8a2b6fae06d2da2d44ee4",
+        "size": 3671
+      },
+      "Acoustic512.mlmodelc/model.mil": {
+        "sha256": "6da01b7433a15306ee93134d7895b74de6b4ab9ed4652421f0ffe53e81ecd22c",
+        "size": 521135
+      },
+      "Acoustic512.mlmodelc/weights/weight.bin": {
+        "sha256": "9dbd21beb8b4fb5d35e22c13b7838bf7e596fb95a7067ef71ef4937b417b23f0",
+        "size": 804725376
+      },
+      "Acoustic5200.mlmodelc/analytics/coremldata.bin": {
+        "sha256": "39b8fc98582f61140b7960b5d58a38e9f8e698ee7a258a084ccc6c24e4a38c55",
+        "size": 243
+      },
+      "Acoustic5200.mlmodelc/coremldata.bin": {
+        "sha256": "2966678c4b6f810495abc424cb2878226a4d567fbc6ff6a1a38a4606bab73cab",
+        "size": 307
+      },
+      "Acoustic5200.mlmodelc/metadata.json": {
+        "sha256": "766979fc74b9ed4d26719b36e74da3ed7217117ec0ff2a466ce6556bf0533eb2",
+        "size": 3686
+      },
+      "Acoustic5200.mlmodelc/model.mil": {
+        "sha256": "f7f40553c4b85217b7621bf9295dd0a56e03c5f3bfde2cabeca1faf7a9bc5161",
+        "size": 523292
+      },
+      "Acoustic5200.mlmodelc/weights/weight.bin": {
+        "sha256": "0bd593fff08ae8c6960f94f09e2b9b2f7a4db1a5d5c56c60fd2cb72139651f6a",
+        "size": 823927424
+      },
+      "Autoregressive.mlmodelc/analytics/coremldata.bin": {
+        "sha256": "2cfafe40a48dab37e5af130897c7a7f280c6ab42e9207c704d0667839ff15bb5",
+        "size": 243
+      },
+      "Autoregressive.mlmodelc/coremldata.bin": {
+        "sha256": "6fe61bd18bfb68804a18d37562604610493f9f84b9886b5200bb038e74d2890a",
+        "size": 719
+      },
+      "Autoregressive.mlmodelc/metadata.json": {
+        "sha256": "8d54a80965da6c5c4c790ea261e0bc22232670f7293136b78832ce7f60ba9ea7",
+        "size": 12156
+      },
+      "Autoregressive.mlmodelc/model.mil": {
+        "sha256": "655651683abef9adcc5a1cf2640ca84740c33367ea6f804d43e31408e4b3ef77",
+        "size": 987479
+      },
+      "Autoregressive.mlmodelc/weights/weight.bin": {
+        "sha256": "12c24802d2a96c69b1c982a10af9d5e42d732ca04ca83db7a8897647412c28d3",
+        "size": 830837890
+      },
+      "Waveform.mlmodelc/analytics/coremldata.bin": {
+        "sha256": "e60d9ccdbf94986ddcc041d6b10e5999c4227f87e37393caae53282aff875580",
+        "size": 243
+      },
+      "Waveform.mlmodelc/coremldata.bin": {
+        "sha256": "06ed74e743b453ec7f1f511ca6ffff3ed38f51588cd28767bd41514f8baac1e0",
+        "size": 156
+      },
+      "Waveform.mlmodelc/metadata.json": {
+        "sha256": "1eee1c80de599e24e87f1380d36bddd508091fea4c9e8401192ccb44a1798f4b",
+        "size": 1491
+      },
+      "Waveform.mlmodelc/model.mil": {
+        "sha256": "fbc282abca7b4023a9d21fc1534708b00d9138620c0e964c30b42efc31684f94",
+        "size": 105123
+      },
+      "Waveform.mlmodelc/weights/weight.bin": {
+        "sha256": "37ed50c14ef811fd2a02bdde2b766e55563680b1c05efd605cba01aaffd402cc",
+        "size": 132723328
+      },
+      "build-settings.json": {
+        "sha256": "b0623c541038354e84e1f215229103280eb7b3858c433c1cbd2f23fff003b33d",
+        "size": 187
+      },
+      "embeddings.f16": {
+        "sha256": "4d7b9e9c90ba8c9af341cb96ef4ac7edda9ffc62f87d630b2d1f2f42609172d8",
+        "size": 756547584
+      },
+      "manifest.json": {
+        "sha256": "95b23f815f50d535ec698438ab1521ce3995ef17367bbb08dfc0ccc69e9a9103",
+        "size": 155
+      },
+      "metal-decoder.json": {
+        "sha256": "f82e860f371b01b61c247bc3c168887dd25654806778ba5cd79b233acca11094",
+        "size": 14499
+      },
+      "tokenizer.tiktoken": {
+        "sha256": "b2b1b8dfb5cc5f024bafc373121c6aba3f66f9a5a0269e243470a1de16a33186",
+        "size": 2561218
+      }
+    }
+  },
+  "release": {
+    "repo": "ferdinandl007/vibeplayer-yue2-coreml",
+    "revision": "53710b82a0a9fa83bf35090b6ee5795e78faea51"
+  }
+}

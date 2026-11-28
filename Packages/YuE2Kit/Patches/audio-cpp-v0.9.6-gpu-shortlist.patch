@@ -1,0 +1,337 @@
+diff --git a/include/engine/framework/modules/transformers/causal_decoder_runtime.h b/include/engine/framework/modules/transformers/causal_decoder_runtime.h
+index f1a7af6..ef87916 100644
+--- a/include/engine/framework/modules/transformers/causal_decoder_runtime.h
++++ b/include/engine/framework/modules/transformers/causal_decoder_runtime.h
+@@ -32,6 +32,7 @@ struct CausalDecoderRuntimeConfig {
+     // Zero keeps full-capacity attention; positive values cache bounded decode graphs.
+     int64_t batched_attention_alignment = 0;
+     bool reuse_batched_decode_scratch = false;
++    int64_t metal_decode_candidate_count = 0;
+ };
+ 
+ struct CausalDecoderRuntimeWeights {
+@@ -63,6 +64,8 @@ struct CausalDecoderBatchedPrefillResult {
+ struct CausalDecoderStepResult {
+     std::vector<float> logits;
+     std::vector<float> hidden;
++    // When present, these are the indices of the raw logits in the shortlist.
++    std::vector<int32_t> candidate_indices;
+ };
+ 
+ class CausalDecoderRuntime {
+@@ -124,6 +127,7 @@ public:
+     void start_decode_embeddings(const runtime::TransformerKVState & state, int64_t required_cache_steps);
+     CausalDecoderStepResult decode_token(int32_t token);
+     void decode_token_into(int32_t token, CausalDecoderStepResult & out);
++    void read_decode_logits(CausalDecoderStepResult & out) const;
+     CausalDecoderStepResult decode_embedding(const std::vector<float> & embedding);
+ 
+     void start_decode_tokens_batched(
+diff --git a/src/framework/modules/transformers/causal_decoder_runtime.cpp b/src/framework/modules/transformers/causal_decoder_runtime.cpp
+index 4658a99..7f355ce 100644
+--- a/src/framework/modules/transformers/causal_decoder_runtime.cpp
++++ b/src/framework/modules/transformers/causal_decoder_runtime.cpp
+@@ -969,6 +969,16 @@ public:
+         run_decode_step_into(out);
+     }
+ 
++    void read_decode_logits(CausalDecoderStepResult & out) const {
++        out.candidate_indices.clear();
++        if (decode_logits_ != nullptr) {
++            out.logits.resize(static_cast<size_t>(ggml_nelements(decode_logits_)));
++            ggml_backend_tensor_get(decode_logits_, out.logits.data(), 0, out.logits.size() * sizeof(float));
++        } else {
++            out.logits.clear();
++        }
++    }
++
+     CausalDecoderStepResult decode_embedding(const std::vector<float> & embedding) {
+         ensure_decode_started();
+         if (decode_input_kind_ != InputKind::Embedding) {
+@@ -1629,6 +1639,22 @@ private:
+         if (decode_hidden_ != nullptr) {
+             ggml_build_forward_expand(decode_graph_, decode_hidden_);
+         }
++        const int64_t candidates = config_.metal_decode_candidate_count;
++        if (backend_type_ == core::BackendType::Metal && input_kind == InputKind::Token &&
++            decode_logits_ != nullptr && decode_logits_->type == GGML_TYPE_F32 &&
++            candidates > 0 && candidates < ggml_nelements(decode_logits_)) {
++            auto * row = ggml_reshape_1d(decode_ctx_.get(), decode_logits_, ggml_nelements(decode_logits_));
++            auto * indices = ggml_top_k(decode_ctx_.get(), row, static_cast<int>(candidates));
++            auto * column = ggml_reshape_2d(decode_ctx_.get(), row, 1, row->ne[0]);
++            auto * values = ggml_get_rows(decode_ctx_.get(), column, indices);
++            if (ggml_backend_supports_op(backend_, indices) && ggml_backend_supports_op(backend_, values)) {
++                decode_candidate_indices_ = indices;
++                decode_candidate_values_ = values;
++                ggml_set_output(indices);
++                ggml_set_output(values);
++                ggml_build_forward_expand(decode_graph_, values);
++            }
++        }
+         decode_buffer_ = ggml_backend_alloc_ctx_tensors(decode_ctx_.get(), backend_);
+         if (decode_buffer_ == nullptr) {
+             throw std::runtime_error("failed to allocate QwenCausalDecodeRuntime decode graph");
+@@ -1927,11 +1953,14 @@ private:
+         if (status != GGML_STATUS_SUCCESS) {
+             throw std::runtime_error("QwenCausalDecodeRuntime decode graph compute failed");
+         }
+-        if (decode_logits_ != nullptr) {
+-            out.logits.resize(static_cast<size_t>(ggml_nelements(decode_logits_)));
+-            ggml_backend_tensor_get(decode_logits_, out.logits.data(), 0, out.logits.size() * sizeof(float));
++        if (decode_candidate_indices_ != nullptr) {
++            out.candidate_indices.resize(static_cast<size_t>(ggml_nelements(decode_candidate_indices_)));
++            out.logits.resize(out.candidate_indices.size());
++            ggml_backend_tensor_get(decode_candidate_indices_, out.candidate_indices.data(), 0,
++                out.candidate_indices.size() * sizeof(int32_t));
++            ggml_backend_tensor_get(decode_candidate_values_, out.logits.data(), 0, out.logits.size() * sizeof(float));
+         } else {
+-            out.logits.clear();
++            read_decode_logits(out);
+         }
+         if (decode_hidden_ != nullptr) {
+             out.hidden.resize(static_cast<size_t>(ggml_nelements(decode_hidden_)));
+@@ -2196,6 +2225,8 @@ private:
+         decode_attention_mask_ = nullptr;
+         decode_logits_readback_token_ids_ = nullptr;
+         decode_logits_ = nullptr;
++        decode_candidate_indices_ = nullptr;
++        decode_candidate_values_ = nullptr;
+         decode_hidden_ = nullptr;
+         decode_graph_ = nullptr;
+         decode_cache_ = runtime::TransformerKVCache();
+@@ -2300,6 +2331,8 @@ private:
+     ggml_tensor * decode_attention_mask_ = nullptr;
+     ggml_tensor * decode_logits_readback_token_ids_ = nullptr;
+     ggml_tensor * decode_logits_ = nullptr;
++    ggml_tensor * decode_candidate_indices_ = nullptr;
++    ggml_tensor * decode_candidate_values_ = nullptr;
+     ggml_tensor * decode_hidden_ = nullptr;
+     ggml_cgraph * decode_graph_ = nullptr;
+     ggml_backend_buffer_t decode_buffer_ = nullptr;
+@@ -2416,6 +2449,10 @@ void CausalDecoderRuntime::decode_token_into(int32_t token, CausalDecoderStepRes
+     impl_->decode_token_into(token, out);
+ }
+ 
++void CausalDecoderRuntime::read_decode_logits(CausalDecoderStepResult & out) const {
++    impl_->read_decode_logits(out);
++}
++
+ CausalDecoderStepResult CausalDecoderRuntime::decode_embedding(const std::vector<float> & embedding) {
+     return impl_->decode_embedding(embedding);
+ }
+diff --git a/src/models/yue2/ar_runtime.cpp b/src/models/yue2/ar_runtime.cpp
+index 2fc6d9d..6eea0ab 100644
+--- a/src/models/yue2/ar_runtime.cpp
++++ b/src/models/yue2/ar_runtime.cpp
+@@ -11,6 +11,9 @@
+ #include <array>
+ #include <chrono>
+ #include <cmath>
++#include <cstdio>
++#include <cstdlib>
++#include <cstring>
+ #include <limits>
+ #include <random>
+ #include <stdexcept>
+@@ -41,6 +44,8 @@ struct Yue2SamplerScratch {
+     std::vector<int32_t> candidates;
+     std::vector<int32_t> kept;
+     std::vector<double> weights;
++    std::vector<float> shortlist_logits;
++    std::vector<int32_t> shortlist_indices;
+ };
+ 
+ engine::modules::DecoderLayerWeights load_layer(
+@@ -264,7 +269,8 @@ int32_t sample_from_allowed_ranges(
+     const Yue2SamplingConfig & sampling,
+     std::mt19937 & rng,
+     Yue2SamplerScratch & scratch,
+-    const char * context) {
++    const char * context,
++    const std::vector<int32_t> * shortlist = nullptr) {
+     if (!(sampling.temperature > 0.0F) || !std::isfinite(sampling.temperature)) {
+         throw std::runtime_error(std::string(context) + " temperature must be finite and positive");
+     }
+@@ -284,28 +290,30 @@ int32_t sample_from_allowed_ranges(
+             }
+             return lhs_score > rhs_score;
+         };
+-        for (const auto & range : ranges) {
+-            const int64_t begin = std::max<int64_t>(0, range.begin);
+-            const int64_t end = std::min<int64_t>(range.end, static_cast<int64_t>(logits.size()));
+-            for (int64_t token = begin; token < end; ++token) {
+-                const float score = logits[static_cast<size_t>(token)];
+-                if (!std::isfinite(score)) {
+-                    continue;
+-                }
+-                const auto token_i32 = static_cast<int32_t>(token);
+-                if (scratch.candidates.size() < keep) {
+-                    scratch.candidates.push_back(token_i32);
++        const auto consider = [&](int32_t token) {
++            const float score = logits[static_cast<size_t>(token)];
++            if (!std::isfinite(score)) return;
++            if (scratch.candidates.size() < keep) {
++                scratch.candidates.push_back(token);
++                std::push_heap(scratch.candidates.begin(), scratch.candidates.end(), worse_than);
++            } else {
++                const int32_t worst = scratch.candidates.front();
++                const float worst_score = logits[static_cast<size_t>(worst)];
++                if (score > worst_score || (score == worst_score && token < worst)) {
++                    std::pop_heap(scratch.candidates.begin(), scratch.candidates.end(), worse_than);
++                    scratch.candidates.back() = token;
+                     std::push_heap(scratch.candidates.begin(), scratch.candidates.end(), worse_than);
+-                } else {
+-                    const int32_t worst = scratch.candidates.front();
+-                    const float worst_score = logits[static_cast<size_t>(worst)];
+-                    if (score > worst_score || (score == worst_score && token_i32 < worst)) {
+-                        std::pop_heap(scratch.candidates.begin(), scratch.candidates.end(), worse_than);
+-                        scratch.candidates.back() = token_i32;
+-                        std::push_heap(scratch.candidates.begin(), scratch.candidates.end(), worse_than);
+-                    }
+                 }
+             }
++        };
++        if (shortlist) {
++            for (int32_t token : *shortlist) consider(token);
++        } else {
++            for (const auto & range : ranges) {
++                const int64_t begin = std::max<int64_t>(0, range.begin);
++                const int64_t end = std::min<int64_t>(range.end, static_cast<int64_t>(logits.size()));
++                for (int64_t token = begin; token < end; ++token) consider(static_cast<int32_t>(token));
++            }
+         }
+         scratch.kept = scratch.candidates;
+     } else {
+@@ -454,6 +462,64 @@ int32_t sample_semantic_token(
+     return index == 0 ? kMusicEndToken : kCodecOffset + index - 1;
+ }
+ 
++// The GPU ranks raw scores. The existing CPU sampler applies the same seeded
++// draw, using this list only if excluded scores cannot enter the final top-k.
++std::optional<int32_t> sample_shortlist(
++    const engine::modules::CausalDecoderStepResult & step,
++    const std::vector<int32_t> & emitted,
++    const Yue2ARSamplingWindow & window, bool semantic,
++    std::mt19937 & rng, Yue2SamplerScratch & scratch) {
++    if (step.candidate_indices.size() != step.logits.size() || step.logits.empty() ||
++        window.sampling.top_k <= 0 || window.sampling.repetition_penalty < 1.0F ||
++        !std::isfinite(window.sampling.repetition_penalty)) {
++        return std::nullopt;
++    }
++    const int64_t rows = semantic ? kCodecSize + 1 : kAbcEndToken + 1;
++    const float missing = -std::numeric_limits<float>::infinity();
++    scratch.shortlist_logits.resize(static_cast<size_t>(rows), missing);
++    for (const int32_t index : scratch.shortlist_indices) {
++        scratch.shortlist_logits[static_cast<size_t>(index)] = missing;
++    }
++    scratch.shortlist_indices.clear();
++    float boundary = std::numeric_limits<float>::infinity();
++    const int64_t stop = semantic ? 0 : window.stop_token;
++    const int64_t begin = semantic ? 1 : window.begin;
++    const int64_t end = semantic ? rows : window.end;
++    for (size_t i = 0; i < step.logits.size(); ++i) {
++        const int32_t index = step.candidate_indices[i];
++        const float value = step.logits[i];
++        if (index < 0 || index >= rows || !std::isfinite(value)) return std::nullopt;
++        boundary = std::min(boundary, value);
++        if ((index >= begin && index < end) ||
++            (index == stop && static_cast<int64_t>(emitted.size()) >= window.min_tokens)) {
++            float & slot = scratch.shortlist_logits[static_cast<size_t>(index)];
++            if (slot != missing) return std::nullopt;
++            slot = value;
++            scratch.shortlist_indices.push_back(index);
++        }
++    }
++    const float penalty = window.sampling.repetition_penalty;
++    if (penalty != 1.0F) {
++        const auto start = std::max<int64_t>(0, static_cast<int64_t>(emitted.size()) - window.sampling.penalty_window);
++        for (int64_t i = start; i < static_cast<int64_t>(emitted.size()); ++i) {
++            const int32_t token = emitted[static_cast<size_t>(i)];
++            const int32_t index = semantic ? compact_semantic_index(token) : token;
++            if (index < 0 || index >= rows) continue;
++            float & value = scratch.shortlist_logits[static_cast<size_t>(index)];
++            value = value < 0.0F ? value * penalty : value / penalty;
++        }
++    }
++    // A strict cutoff also handles ties at the GPU top-k boundary.
++    int64_t above = 0;
++    for (const int32_t index : scratch.shortlist_indices) {
++        if (scratch.shortlist_logits[static_cast<size_t>(index)] > boundary) ++above;
++    }
++    if (above < window.sampling.top_k) return std::nullopt;
++    const int32_t index = sample_from_allowed_ranges(
++        scratch.shortlist_logits, {}, window.sampling, rng, scratch, "Yue2 GPU shortlist", &scratch.shortlist_indices);
++    return semantic ? (index == 0 ? kMusicEndToken : kCodecOffset + index - 1) : index;
++}
++
+ core::TensorValue view_linear_rows(
+     ggml_context * ctx,
+     const core::TensorValue & weight,
+@@ -527,6 +593,11 @@ struct Yue2ARRuntime::Impl {
+             decode_graph_arena_bytes,
+             kCodecSize + 1,
+             packed_projections);
++        const char * experiment = std::getenv("VIBE_YUE2_GPU_SHORTLIST");
++        if (execution.backend_type() == core::BackendType::Metal && experiment && std::strcmp(experiment, "1") == 0) {
++            abc_runtime_config.metal_decode_candidate_count = 512;
++            semantic_runtime_config.metal_decode_candidate_count = 512;
++        }
+         semantic_runtime_config.batched_attention_alignment = execution.backend_type() == core::BackendType::Cuda && decode_cache_alignment > 1
+             ? decode_cache_alignment : 0;
+     }
+@@ -788,11 +859,29 @@ struct Yue2ARRuntime::Impl {
+         double decode_ms = 0.0;
+         double refill_prefill_ms = 0.0;
+         int64_t refill_count = 0;
++        int64_t gpu_shortlists = 0;
++        int64_t full_reads = 0;
++        const auto report_shortlists = [&] {
++            if (gpu_shortlists + full_reads > 0) {
++                std::fprintf(stderr, "vibeplayer.gpu_shortlist phase=%s accepted=%lld fallback=%lld\n",
++                    compact_abc ? "abc" : "music", static_cast<long long>(gpu_shortlists),
++                    static_cast<long long>(full_reads));
++            }
++        };
+         for (int64_t step = static_cast<int64_t>(emitted.size()); step < window.max_tokens; ++step) {
+             const auto sample_start = Clock::now();
+-            const int32_t token = compact_semantic ?
++            std::optional<int32_t> chosen;
++            if (!decode_result.candidate_indices.empty()) {
++                chosen = sample_shortlist(decode_result, emitted, window, compact_semantic, rng, scratch);
++                if (chosen) ++gpu_shortlists;
++                else {
++                    ++full_reads;
++                    active_runtime->read_decode_logits(decode_result);
++                }
++            }
++            const int32_t token = chosen ? *chosen : (compact_semantic ?
+                 sample_semantic_token(decode_result.logits, emitted, window, rng, scratch) :
+-                sample_token(decode_result.logits, emitted, window, rng, scratch);
++                sample_token(decode_result.logits, emitted, window, rng, scratch));
+             sample_ms += engine::debug::elapsed_ms(sample_start);
+             if (token == window.stop_token) {
+                 engine::debug::timing_log_scalar("yue2.ar.generate.sample_ms", sample_ms);
+@@ -802,6 +891,7 @@ struct Yue2ARRuntime::Impl {
+                 engine::debug::timing_log_scalar("yue2.ar.generate.emitted_tokens", emitted.size());
+                 engine::debug::timing_log_scalar("yue2.ar.generate.total_ms", engine::debug::elapsed_ms(total_start));
+                 if (refill_count > 0) active_runtime->release_prefill_graph();
++                report_shortlists();
+                 return emitted;
+             }
+             emitted.push_back(token);
+@@ -824,6 +914,7 @@ struct Yue2ARRuntime::Impl {
+                 refill_prefill_ms += engine::debug::elapsed_ms(refill_prefill_start);
+                 decode_result.logits = std::move(refill.logits);
+                 decode_result.hidden = std::move(refill.hidden);
++                decode_result.candidate_indices.clear();
+                 ++refill_count;
+                 continue;
+             }
+@@ -838,6 +929,7 @@ struct Yue2ARRuntime::Impl {
+         engine::debug::timing_log_scalar("yue2.ar.generate.emitted_tokens", emitted.size());
+         engine::debug::timing_log_scalar("yue2.ar.generate.total_ms", engine::debug::elapsed_ms(total_start));
+         if (refill_count > 0) active_runtime->release_prefill_graph();
++        report_shortlists();
+         return emitted;
+     }
+ 
